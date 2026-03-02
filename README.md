@@ -191,6 +191,39 @@ Logs older than 7 days are automatically deleted on startup.
 
 ---
 
+## Testing
+
+The test suite uses `bun test` (built-in, no extra dependencies) across 89 tests in 6 files.
+
+```bash
+bun run test
+```
+
+Because Bun 1.x runs all test files in a single process and `mock.module()` patches the global module registry, the test script runs in two separate invocations to prevent route-level mocks from contaminating service-level tests:
+
+1. **Config, middleware, and service tests** — use real temp git repos and real `Bun.serve()` servers; no module mocking.
+2. **Route tests** — mock all service modules via `mock.module()` and exercise the update workflow end-to-end through `app.handle()`.
+
+### Test files
+
+| File | Coverage |
+|------|----------|
+| `tests/config.test.ts` | Config validation: required fields, defaults, duplicate IDs |
+| `tests/middleware/auth.test.ts` | IP allowlist matching, token validation |
+| `tests/services/git.test.ts` | `gitStatus`, `gitCheckout` (branch name injection guards), `detectDependencyChanges` |
+| `tests/services/healthCheck.test.ts` | Ping and full health check modes, connection failure, non-JSON bodies |
+| `tests/services/installer.test.ts` | Lockfile detection priority, custom install commands, non-zero exit handling |
+| `tests/routes/update.test.ts` | All 9 update workflow paths: dryRun, dirty tree, installMode×3, restartMode×3, auth |
+
+### Watch mode
+
+```bash
+bun run test:watch   # watches config, middleware, and service tests
+bun test tests/routes --watch  # watch route tests separately
+```
+
+---
+
 ## File Structure
 
 ```

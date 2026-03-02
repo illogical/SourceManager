@@ -28,13 +28,28 @@ export function loadConfig(): AppConfig {
   }
 
   const config = parsed as AppConfig
-  validateConfig(config)
+  try {
+    validateConfig(config)
+  } catch (e) {
+    if (e instanceof ConfigError) {
+      console.error(`[SourceManager] CONFIG ERROR: ${e.message}`)
+      process.exit(1)
+    }
+    throw e
+  }
 
   cachedConfig = config
   return config
 }
 
-function validateConfig(config: AppConfig): void {
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ConfigError"
+  }
+}
+
+export function validateConfig(config: AppConfig): void {
   if (!config.server?.token) {
     abort("server.token is required in projects.json")
   }
@@ -67,8 +82,7 @@ function validateConfig(config: AppConfig): void {
 }
 
 function abort(msg: string): never {
-  console.error(`[SourceManager] CONFIG ERROR: ${msg}`)
-  process.exit(1)
+  throw new ConfigError(msg)
 }
 
 export function getConfig(): AppConfig {

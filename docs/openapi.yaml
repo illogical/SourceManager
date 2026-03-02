@@ -1,0 +1,845 @@
+openapi: 3.1.0
+
+info:
+  title: SourceManager API
+  version: 1.0.0
+  description: |
+    Secure HTTP API for triggering Git operations and managing server process lifecycle
+    on a Windows dev machine. Designed to be called by AI agents on remote machines.
+
+    All `/v1/*` endpoints require the `X-DevServer-Token` header.
+    Unauthenticated endpoints: `GET /health`, `GET /swagger`, `GET /swagger/json`.
+
+servers:
+  - url: http://localhost:17106
+    description: Local dev server (default port)
+
+tags:
+  - name: Health
+    description: API liveness (unauthenticated)
+  - name: Projects
+    description: Project listing, detail, status, logs, and ports
+  - name: Update
+    description: Git pull / branch-switch workflow
+  - name: Lifecycle
+    description: Server process start, stop, and restart
+
+security:
+  - DevServerToken: []
+
+# ── Components ────────────────────────────────────────────────────────────────
+
+components:
+
+  securitySchemes:
+    DevServerToken:
+      type: apiKey
+      in: header
+      name: X-DevServer-Token
+
+  # ── Reusable schemas ───────────────────────────────────────────────────────
+
+  schemas:
+
+    StepStatus:
+      type: string
+      enum: [pending, success, failure, skipped]
+
+    StepResult:
+      type: object
+      required: [step, status, message, durationMs]
+      properties:
+        step:
+          type: string
+          description: |
+            Step name. Known values: `precheck`, `fetch`, `checkout`, `pull`,
+            `depCheck`, `install`, `restart`, `health`, `health-retry`.
+          example: pull
+        status:
+          $ref: '#/components/schemas/StepStatus'
+        message:
+          type: string
+          example: Pulled 3 commits
+        durationMs:
+          type: integer
+          minimum: 0
+          example: 280
+
+    InstallRunResult:
+      type: object
+      required: [status, reason]
+      properties:
+        status:
+          $ref: '#/components/schemas/StepStatus'
+        reason:
+          type: string
+          example: no dependency changes
+        durationMs:
+          type: integer
+          minimum: 0
+
+    RestartRunResult:
+      type: object
+      required: [status, reason]
+      properties:
+        status:
+          $ref: '#/components/schemas/StepStatus'
+        reason:
+          type: string
+          example: health failure triggered restart
+        durationMs:
+          type: integer
+          minimum: 0
+
+    RunReport:
+      type: object
+      required:
+        - runId
+        - projectId
+        - startedAt
+        - durationMs
+        - branch
+        - dryRun
+        - updated
+        - reason
+        - installRun
+        - restartRun
+        - healthStatus
+        - steps
+      properties:
+        runId:
+          type: string
+          format: uuid
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+        projectId:
+          type: string
+          example: my-app
+        startedAt:
+          type: string
+          format: date-time
+          example: "2026-03-01T12:00:00.000Z"
+        durationMs:
+          type: integer
+          minimum: 0
+          example: 4890
+        branch:
+          type: string
+          example: main
+        dryRun:
+          type: boolean
+          example: false
+        updated:
+          type: boolean
+          description: "`false` when no new commits were pulled (already up-to-date, dirty tree, or dry run)."
+          example: true
+        reason:
+          type: string
+          description: Human-readable summary of the run outcome.
+          example: Pulled main successfully
+        installRun:
+          $ref: '#/components/schemas/InstallRunResult'
+        restartRun:
+          $ref: '#/components/schemas/RestartRunResult'
+        healthStatus:
+          type: string
+          enum: [pass, fail, skipped]
+          example: pass
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/StepResult'
+
+    ProcessState:
+      type: object
+      required: [projectId, pid, port, startedAt, command]
+      properties:
+        projectId:
+          type: string
+          example: my-app
+        pid:
+          type: integer
+          example: 12345
+        port:
+          type: integer
+          example: 3000
+        startedAt:
+          type: string
+          format: date-time
+          example: "2026-03-01T11:30:00.000Z"
+        command:
+          type: string
+          example: bun run dev
+
+    ProcessDetail:
+      description: ProcessState extended with a calculated uptime field.
+      allOf:
+        - $ref: '#/components/schemas/ProcessState'
+        - type: object
+          required: [uptimeMs]
+          properties:
+            uptimeMs:
+              type: integer
+              minimum: 0
+              description: Milliseconds elapsed since the process was started.
+              example: 1800000
+
+    PortEntry:
+      type: object
+      required: [port, projectId, pid, status]
+      properties:
+        port:
+          type: integer
+          example: 3000
+        projectId:
+          type: string
+          example: my-app
+        pid:
+          type: integer
+          example: 12345
+        status:
+          type: string
+          enum: [running, stopped]
+          example: running
+
+    PortKillResult:
+      type: object
+      required: [killed, previousPid]
+      properties:
+        killed:
+          type: boolean
+          description: Whether the conflicting process was successfully terminated.
+        previousPid:
+          type: integer
+          description: PID of the killed process. `0` if the port was already free.
+          example: 9876
+        error:
+          type: string
+          description: Error detail when `killed` is `false`.
+
+    # Abbreviated shapes returned inside list responses
+
+    ProjectProcessSummary:
+      description: Subset of ProcessState included in the project list.
+      type: object
+      required: [pid, startedAt, command]
+      properties:
+        pid:
+          type: integer
+          example: 12345
+        startedAt:
+          type: string
+          format: date-time
+        command:
+          type: string
+          example: bun run dev
+
+    LastRunSummary:
+      description: Subset of RunReport included in the project list.
+      type: object
+      required: [runId, startedAt, updated, healthStatus, durationMs]
+      properties:
+        runId:
+          type: string
+          format: uuid
+        startedAt:
+          type: string
+          format: date-time
+        updated:
+          type: boolean
+        healthStatus:
+          type: string
+          enum: [pass, fail, skipped]
+        durationMs:
+          type: integer
+          minimum: 0
+
+    ProjectSummary:
+      type: object
+      required: [id, defaultBranch, port, healthUrl, healthMode, running, process, lastRun]
+      properties:
+        id:
+          type: string
+          example: my-app
+        defaultBranch:
+          type: string
+          example: main
+        port:
+          type: integer
+          example: 3000
+        healthUrl:
+          type: string
+          format: uri
+          example: http://localhost:3000/health
+        healthMode:
+          type: string
+          enum: [ping, full]
+          example: ping
+        running:
+          type: boolean
+          example: true
+        process:
+          oneOf:
+            - $ref: '#/components/schemas/ProjectProcessSummary'
+            - type: 'null'
+        lastRun:
+          oneOf:
+            - $ref: '#/components/schemas/LastRunSummary'
+            - type: 'null'
+
+    ProjectDetail:
+      type: object
+      required:
+        - id
+        - repoPath
+        - defaultBranch
+        - port
+        - healthUrl
+        - healthMode
+        - packageManager
+        - scriptName
+        - running
+        - process
+      properties:
+        id:
+          type: string
+          example: my-app
+        repoPath:
+          type: string
+          example: "C:\\LocalDev\\Projects\\my-app"
+        defaultBranch:
+          type: string
+          example: main
+        port:
+          type: integer
+          example: 3000
+        healthUrl:
+          type: string
+          format: uri
+          example: http://localhost:3000/health
+        healthMode:
+          type: string
+          enum: [ping, full]
+          example: ping
+        packageManager:
+          type: string
+          enum: [auto, bun, npm, yarn, pnpm]
+          example: bun
+        scriptName:
+          type: string
+          example: dev
+        running:
+          type: boolean
+          example: true
+        process:
+          oneOf:
+            - $ref: '#/components/schemas/ProcessState'
+            - type: 'null'
+
+    LifecycleResult:
+      description: Returned by start and restart endpoints.
+      type: object
+      required: [projectId, success, message, portKillResult, process]
+      properties:
+        projectId:
+          type: string
+          example: my-app
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Started "my-app" with PID 12345 on port 3000
+        portKillResult:
+          description: Non-null only when a port conflict was detected and resolved.
+          oneOf:
+            - $ref: '#/components/schemas/PortKillResult'
+            - type: 'null'
+        process:
+          oneOf:
+            - $ref: '#/components/schemas/ProcessState'
+            - type: 'null'
+
+    StopResult:
+      type: object
+      required: [projectId, success, message]
+      properties:
+        projectId:
+          type: string
+          example: my-app
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Stopped "my-app" (PID 12345)
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: Unauthorized
+
+  # ── Reusable responses ─────────────────────────────────────────────────────
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid `X-DevServer-Token` header.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Unauthorized
+
+    NotFound:
+      description: Project ID not found in config.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: 'Project not found: "unknown-app"'
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+
+paths:
+
+  # ── Unauthenticated ────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      operationId: getHealth
+      summary: API liveness check
+      description: Returns current status, version, and uptime. No authentication required.
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: API is running.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, version, uptimeMs]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  version:
+                    type: string
+                    example: 1.0.0
+                  uptimeMs:
+                    type: integer
+                    minimum: 0
+                    example: 86400000
+
+  /swagger:
+    get:
+      operationId: getSwaggerUi
+      summary: Swagger UI
+      description: Interactive OpenAPI documentation. No authentication required.
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Swagger UI HTML page.
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /swagger/json:
+    get:
+      operationId: getOpenApiSpec
+      summary: Raw OpenAPI spec
+      description: |
+        OpenAPI 3.x JSON spec generated live from Elysia route definitions.
+        No authentication required. Useful for agent scripts that need to introspect the API.
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: OpenAPI 3.x specification object.
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ── Projects ───────────────────────────────────────────────────────────────
+
+  /v1/projects:
+    get:
+      operationId: listProjects
+      summary: List all managed projects
+      description: |
+        Returns every allowlisted project with its live process state and
+        the most recent run summary. Projects are listed in config order.
+      tags: [Projects]
+      responses:
+        '200':
+          description: Project list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProjectSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/projects/{id}:
+    get:
+      operationId: getProject
+      summary: Get project detail
+      description: Full project config plus live process state.
+      tags: [Projects]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Project ID as defined in `projects.json`.
+          schema:
+            type: string
+          example: my-app
+      responses:
+        '200':
+          description: Project detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/projects/{id}/status:
+    get:
+      operationId: getProjectStatus
+      summary: Get last 3 run reports
+      description: Returns the most recent run reports (newest first) for the project.
+      tags: [Projects]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Recent run reports.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projectId, runs]
+                properties:
+                  projectId:
+                    type: string
+                    example: my-app
+                  runs:
+                    type: array
+                    maxItems: 3
+                    items:
+                      $ref: '#/components/schemas/RunReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/projects/{id}/process:
+    get:
+      operationId: getProjectProcess
+      summary: Get live process state
+      description: |
+        Returns PID, port, start time, and calculated uptime for the tracked process.
+        Returns `running: false` and `process: null` when no process is tracked.
+      tags: [Projects]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Live process state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projectId, running, process]
+                properties:
+                  projectId:
+                    type: string
+                    example: my-app
+                  running:
+                    type: boolean
+                    example: true
+                  process:
+                    oneOf:
+                      - $ref: '#/components/schemas/ProcessDetail'
+                      - type: 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/projects/{id}/logs:
+    get:
+      operationId: getProjectLogs
+      summary: Get recent run logs
+      description: Returns run log entries for the project, newest first.
+      tags: [Projects]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: n
+          in: query
+          required: false
+          description: Number of entries to return. Clamped to 1–100. Default `20`.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Recent run logs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projectId, count, logs]
+                properties:
+                  projectId:
+                    type: string
+                    example: my-app
+                  count:
+                    type: integer
+                    example: 5
+                  logs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RunReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/ports:
+    get:
+      operationId: listPorts
+      summary: List all managed ports
+      description: Returns every port currently tracked by the process manager with PID and status.
+      tags: [Projects]
+      responses:
+        '200':
+          description: Port entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ports]
+                properties:
+                  ports:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PortEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── Update ─────────────────────────────────────────────────────────────────
+
+  /v1/projects/{id}/update:
+    post:
+      operationId: updateProject
+      summary: Trigger git update workflow
+      description: |
+        Runs the full safe update state machine. Each step emits a `StepResult`.
+        Any step failure short-circuits remaining steps (recorded as `skipped`).
+
+        **Steps (in order):**
+        1. **precheck** — `git status --porcelain`; aborts if tree is dirty.
+        2. **fetch** — `git fetch origin`.
+        3. **checkout** — `git checkout <branch>` (branch validated against `/^[\w./-]+$/`).
+        4. **pull** — `git pull --ff-only origin <branch>`; aborts on failure.
+        5. **depCheck** — inspects `ORIG_HEAD..HEAD` diff for lockfile / `package.json` changes.
+        6. **install** — runs install command per `installMode`.
+        7. **restart** — if `restartMode=always`, restarts the server immediately.
+        8. **health** — queries `healthUrl` per `healthMode` (5 s timeout).
+        9. **health-retry** — if `restartMode=auto` and health failed, auto-restarts then re-checks.
+
+        All steps are skipped when `dryRun: true`, except precheck.
+      tags: [Update]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch:
+                  type: string
+                  description: Branch to checkout and pull. Defaults to project's `defaultBranch`.
+                  example: feature/xyz
+                installMode:
+                  type: string
+                  enum: [auto, always, never]
+                  default: auto
+                  description: |
+                    - `auto` — install only if lockfile or `package.json` changed
+                    - `always` — always install regardless of changes
+                    - `never` — skip install
+                restartMode:
+                  type: string
+                  enum: [auto, always, never]
+                  default: auto
+                  description: |
+                    - `auto` — restart only if the health check fails after the update
+                    - `always` — restart unconditionally after the update
+                    - `never` — never restart (health check still runs)
+                dryRun:
+                  type: boolean
+                  default: false
+                  description: Runs precheck only; skips all git mutations, install, restart, and health check.
+            example:
+              branch: main
+              installMode: auto
+              restartMode: auto
+              dryRun: false
+      responses:
+        '200':
+          description: Run report with per-step results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunReport'
+              example:
+                runId: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+                projectId: my-app
+                startedAt: "2026-03-01T12:00:00.000Z"
+                durationMs: 4890
+                branch: main
+                dryRun: false
+                updated: true
+                reason: Pulled main successfully
+                installRun:
+                  status: skipped
+                  reason: no dependency changes
+                restartRun:
+                  status: success
+                  reason: health failure triggered restart
+                  durationMs: 320
+                healthStatus: pass
+                steps:
+                  - { step: precheck,  status: success, message: Working tree is clean,        durationMs: 12  }
+                  - { step: fetch,     status: success, message: Fetched from origin,           durationMs: 310 }
+                  - { step: checkout,  status: success, message: Checked out branch "main",     durationMs: 45  }
+                  - { step: pull,      status: success, message: Pulled 2 commits,              durationMs: 280 }
+                  - { step: depCheck,  status: success, message: No dependency changes detected, durationMs: 8  }
+                  - { step: install,   status: skipped, message: "no dependency changes (installMode=auto)", durationMs: 0 }
+                  - { step: restart,   status: skipped, message: "restartMode=auto \u2014 will check health first", durationMs: 0 }
+                  - { step: health,    status: failure, message: HTTP 502 Bad Gateway,          durationMs: 210 }
+                  - { step: restart,   status: success, message: "Auto-restart triggered (health failed): Started \"my-app\" with PID 12346 on port 3000", durationMs: 320 }
+                  - { step: health-retry, status: success, message: Health check passed after restart, durationMs: 43 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Lifecycle ──────────────────────────────────────────────────────────────
+
+  /v1/projects/{id}/start:
+    post:
+      operationId: startProject
+      summary: Start project server
+      description: |
+        Spawns the project server using the configured package manager and script name
+        (e.g. `bun run dev`). If the project's port is already in use — by a managed
+        or external process — that process is auto-killed before starting.
+      tags: [Lifecycle]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Start result with the new process state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifecycleResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/projects/{id}/stop:
+    post:
+      operationId: stopProject
+      summary: Stop project server
+      description: |
+        Sends `SIGTERM` to the tracked process. If the process is still alive after
+        500 ms, sends `SIGKILL`. Returns `success: false` when no process is tracked.
+      tags: [Lifecycle]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Stop result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/projects/{id}/restart:
+    post:
+      operationId: restartProject
+      summary: Restart project server
+      description: |
+        Stops the currently tracked process (if any), then starts a fresh one.
+        Auto-kills any conflicting process on the port, the same as `/start`.
+      tags: [Lifecycle]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Restart result with the new process state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifecycleResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'

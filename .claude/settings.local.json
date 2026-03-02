@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(bun install)",
-      "Bash(timeout 8 bun run src/index.ts)"
+      "Bash(timeout 8 bun run src/index.ts)",
+      "Bash(bun test)",
+      "Bash(bun test tests/services/healthCheck.test.ts)",
+      "Bash(bun test tests/services/installer.test.ts)",
+      "Bash(bun test --help)",
+      "Bash(bun test tests/routes)",
+      "Bash(bun test tests/config.test.ts tests/middleware tests/services)",
+      "Bash(bun run test)"
     ]
   }
 }

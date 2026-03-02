@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "bun run --watch src/index.ts",
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "test": "bun test tests/config.test.ts tests/middleware tests/services && bun test tests/routes",
+    "test:watch": "bun test tests/config.test.ts tests/middleware tests/services --watch"
   },
   "dependencies": {
     "elysia": "^1.3.0",
