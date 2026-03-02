@@ -71,14 +71,21 @@ Edit `data/projects.json`:
 **3. Run the server**
 
 ```bash
-# Development (hot reload)
+# Development — file watcher enabled
 bun run dev
 
-# Production
+# Production — no watcher
 bun run start
 ```
 
 The API starts on port `17106`. Visit `http://localhost:17106/swagger` for interactive docs.
+
+> **`bun run dev` uses `--watch` mode.** Bun monitors all source files and automatically
+> restarts the server when they change. This is significant for the update workflow: when
+> an agent calls `POST /v1/projects/SourceManager/update` to pull new code, the changed
+> source files trigger an automatic restart — no explicit `/restart` API call is needed.
+> The update workflow's health check step confirms the new version came back up.
+> Use `restartMode: "never"` when updating SourceManager itself in dev mode.
 
 ---
 
