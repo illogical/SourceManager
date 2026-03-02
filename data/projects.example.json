@@ -1,0 +1,32 @@
+{
+  "server": {
+    "port": 17106,
+    "token": "replace-with-a-strong-secret-token",
+    "allowedIps": []
+  },
+  "projects": [
+    {
+      "id": "my-web-app",
+      "repoPath": "C:\\LocalDev\\Projects\\my-web-app",
+      "defaultBranch": "main",
+      "healthUrl": "http://localhost:3000/health",
+      "healthMode": "ping",
+      "port": 3000,
+      "packageManager": "auto",
+      "scriptName": "dev",
+      "installCommand": "bun install",
+      "allowedIps": []
+    },
+    {
+      "id": "my-api",
+      "repoPath": "C:\\LocalDev\\Projects\\my-api",
+      "defaultBranch": "main",
+      "healthUrl": "http://localhost:8080/health",
+      "healthMode": "full",
+      "port": 8080,
+      "packageManager": "bun",
+      "scriptName": "dev",
+      "allowedIps": ["192.168.1.0/24"]
+    }
+  ]
+}

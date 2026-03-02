@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun install)",
+      "Bash(timeout 8 bun run src/index.ts)"
+    ]
+  }
+}
