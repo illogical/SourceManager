@@ -11,6 +11,7 @@ import { logsRoute } from "./routes/logs"
 import { processManager } from "./services/processManager"
 import { rotateOldLogs } from "./services/runLogger"
 import { ProjectNotFoundError } from "./config"
+import { validateToken } from "./middleware/auth"
 
 // ── Startup ────────────────────────────────────────────────────────────────
 
@@ -24,15 +25,6 @@ await processManager.init()
 
 // Rotate old logs (keep 7 days)
 await rotateOldLogs()
-
-// ── Auth guard ─────────────────────────────────────────────────────────────
-
-function requireToken(headers: Record<string, string | undefined>): void {
-  const token = headers["x-devserver-token"]
-  if (!token || token !== config.server.token) {
-    throw new Error("UNAUTHORIZED")
-  }
-}
 
 // ── App ────────────────────────────────────────────────────────────────────
 
@@ -68,9 +60,7 @@ const app = new Elysia()
   .group("/v1", (app) =>
     app
       .onBeforeHandle(({ headers, set }) => {
-        try {
-          requireToken(headers as Record<string, string | undefined>)
-        } catch {
+        if (!validateToken(headers as Record<string, string | undefined>)) {
           set.status = 401
           return { error: "Unauthorized: missing or invalid X-DevServer-Token" }
         }
@@ -88,10 +78,6 @@ const app = new Elysia()
       set.status = 404
       return { error: error.message }
     }
-    if (error.message === "UNAUTHORIZED") {
-      set.status = 401
-      return { error: "Unauthorized: missing or invalid X-DevServer-Token" }
-    }
     console.error("[SourceManager] Unhandled error:", error)
     set.status = 500
     return { error: "Internal server error" }
@@ -102,9 +88,10 @@ const app = new Elysia()
 console.log(`
 ╔══════════════════════════════════════════════════╗
 ║          SourceManager API — Running             ║
-╠══════════════════════════════════════════════════╣
-║  Port:    ${String(config.server.port).padEnd(38)}║
-║  Projects: ${String(config.projects.length).padEnd(37)}║
-║  Swagger: http://localhost:${config.server.port}/swagger${" ".repeat(Math.max(0, 18 - String(config.server.port).length))}║
 ╚══════════════════════════════════════════════════╝
+  Port:    ${String(config.server.port).padEnd(38)}
+  Projects: ${String(config.projects.length).padEnd(37)}
+  Swagger: http://localhost:${config.server.port}/swagger${" ".repeat(Math.max(0, 18 - String(config.server.port).length))}
+  Started: ${new Date().toLocaleString().padEnd(38)}
+
 `)
