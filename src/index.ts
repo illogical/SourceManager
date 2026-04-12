@@ -1,4 +1,4 @@
-import Elysia from "elysia"
+import Elysia, { NotFoundError } from "elysia"
 import { swagger } from "@elysiajs/swagger"
 import { loadConfig } from "./config"
 import { requestLoggerMiddleware } from "./middleware/requestLogger"
@@ -53,6 +53,21 @@ const app = new Elysia()
   // Request logging (all routes)
   .use(requestLoggerMiddleware)
 
+  // Favicon (SVG, served as image/svg+xml — accepted by all modern browsers)
+  .get("/favicon.ico", () =>
+    new Response(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+        <rect width="32" height="32" rx="7" fill="#0f172a"/>
+        <circle cx="11" cy="8"  r="3" fill="#38bdf8"/>
+        <circle cx="11" cy="24" r="3" fill="#38bdf8"/>
+        <circle cx="22" cy="16" r="3" fill="#818cf8"/>
+        <line x1="11" y1="11" x2="11" y2="21" stroke="#38bdf8" stroke-width="2" stroke-linecap="round"/>
+        <path d="M11 11.5 Q11 16 22 16" fill="none" stroke="#818cf8" stroke-width="2" stroke-linecap="round"/>
+      </svg>`,
+      { headers: { "content-type": "image/svg+xml" } }
+    )
+  )
+
   // Unauthenticated routes
   .use(healthRoute)
 
@@ -77,6 +92,10 @@ const app = new Elysia()
     if (error instanceof ProjectNotFoundError) {
       set.status = 404
       return { error: error.message }
+    }
+    if (error instanceof NotFoundError) {
+      set.status = 404
+      return { error: "Not found" }
     }
     console.error("[SourceManager] Unhandled error:", error)
     set.status = 500
