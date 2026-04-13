@@ -14,10 +14,12 @@ import { logRun } from "../services/runLogger"
 import type {
   InstallMode,
   InstallRunResult,
+  ProjectConfig,
   RestartMode,
   RestartRunResult,
   RunReport,
   StepResult,
+  UpdateAccepted,
 } from "../types"
 
 function makeId(): string {
@@ -28,14 +30,184 @@ function skipped(step: string, reason: string): StepResult {
   return { step, status: "skipped", message: reason, durationMs: 0 }
 }
 
+// ── Steps 2–8 extracted so the handler stays readable ────────────────────────
+
+async function runBackgroundSteps(opts: {
+  project: ProjectConfig
+  runId: string
+  startedAt: string
+  runStart: number
+  branch: string
+  installMode: InstallMode
+  restartMode: RestartMode
+  dryRun: boolean
+  steps: StepResult[]
+}): Promise<void> {
+  const { project, runId, startedAt, runStart, branch, installMode, restartMode, dryRun } = opts
+  const steps = [...opts.steps] // copy so we don't mutate the caller's array
+
+  let installRun: InstallRunResult = { status: "skipped", reason: "not reached" }
+  let restartRun: RestartRunResult = { status: "skipped", reason: "not reached" }
+  let healthStatus: RunReport["healthStatus"] = "skipped"
+  let updated = false
+  let reason = ""
+
+  // ── Step 2: Fetch ──────────────────────────────────────────────────────────
+  if (!dryRun) {
+    const fetchStep = await gitFetch(project.repoPath)
+    steps.push(fetchStep)
+    if (fetchStep.status === "failure") {
+      reason = "Fetch failed"
+      await logRun(buildReport({ runId, projectId: project.id, startedAt, branch, dryRun, durationMs: Date.now() - runStart, steps, updated: false, reason, installRun: { status: "skipped", reason: "fetch failed" }, restartRun: { status: "skipped", reason: "fetch failed" }, healthStatus: "skipped" }))
+      return
+    }
+  } else {
+    steps.push(skipped("fetch", "dry run"))
+  }
+
+  // ── Step 3: Checkout ───────────────────────────────────────────────────────
+  if (!dryRun) {
+    const checkoutStep = await gitCheckout(project.repoPath, branch)
+    steps.push(checkoutStep)
+    if (checkoutStep.status === "failure") {
+      reason = `Checkout of branch "${branch}" failed`
+      await logRun(buildReport({ runId, projectId: project.id, startedAt, branch, dryRun, durationMs: Date.now() - runStart, steps, updated: false, reason, installRun: { status: "skipped", reason: "checkout failed" }, restartRun: { status: "skipped", reason: "checkout failed" }, healthStatus: "skipped" }))
+      return
+    }
+  } else {
+    steps.push(skipped("checkout", "dry run"))
+  }
+
+  // ── Step 4: Pull ───────────────────────────────────────────────────────────
+  if (!dryRun) {
+    const pullStep = await gitPull(project.repoPath, branch)
+    steps.push(pullStep)
+    if (pullStep.status === "failure") {
+      reason = "Pull failed"
+      await logRun(buildReport({ runId, projectId: project.id, startedAt, branch, dryRun, durationMs: Date.now() - runStart, steps, updated: false, reason, installRun: { status: "skipped", reason: "pull failed" }, restartRun: { status: "skipped", reason: "pull failed" }, healthStatus: "skipped" }))
+      return
+    }
+    updated = !pullStep.message.includes("Already up to date")
+    reason = pullStep.message
+  } else {
+    steps.push(skipped("pull", "dry run"))
+    reason = "Dry run — no mutations applied"
+  }
+
+  // ── Step 5: Dependency check ───────────────────────────────────────────────
+  let needsInstall = false
+  if (!dryRun) {
+    const depStart = Date.now()
+    needsInstall = await detectDependencyChanges(project.repoPath)
+    steps.push({
+      step: "depCheck",
+      status: "success",
+      message: needsInstall ? "Dependency files changed" : "No dependency changes detected",
+      durationMs: Date.now() - depStart,
+    })
+  } else {
+    steps.push(skipped("depCheck", "dry run"))
+  }
+
+  // ── Step 6: Install ────────────────────────────────────────────────────────
+  if (dryRun || installMode === "never") {
+    const skipReason = dryRun ? "dry run" : "installMode=never"
+    steps.push(skipped("install", skipReason))
+    installRun = { status: "skipped", reason: skipReason }
+  } else if (installMode === "always" || needsInstall) {
+    const installStep = await runInstall(project)
+    steps.push(installStep)
+    installRun = {
+      status: installStep.status,
+      reason: installStep.message,
+      durationMs: installStep.durationMs,
+    }
+  } else {
+    steps.push(skipped("install", "no dependency changes (installMode=auto)"))
+    installRun = { status: "skipped", reason: "no dependency changes" }
+  }
+
+  // ── Step 7: Restart ────────────────────────────────────────────────────────
+  let healthCheckNeeded = !dryRun
+
+  if (dryRun || restartMode === "never") {
+    const skipReason = dryRun ? "dry run" : "restartMode=never"
+    steps.push(skipped("restart", skipReason))
+    restartRun = { status: "skipped", reason: skipReason }
+  } else if (restartMode === "always") {
+    const restartStart = Date.now()
+    const result = await processManager.restart(project)
+    const durationMs = Date.now() - restartStart
+    steps.push({
+      step: "restart",
+      status: result.success ? "success" : "failure",
+      message: result.message,
+      durationMs,
+    })
+    restartRun = { status: result.success ? "success" : "failure", reason: result.message, durationMs }
+  } else {
+    // auto: restart only if health fails after update
+    steps.push(skipped("restart", "restartMode=auto — will check health first"))
+    restartRun = { status: "skipped", reason: "restartMode=auto — deferring to health check result" }
+  }
+
+  // ── Step 8: Health check ───────────────────────────────────────────────────
+  if (!healthCheckNeeded) {
+    steps.push(skipped("health", "dry run"))
+    healthStatus = "skipped"
+  } else {
+    const healthResult = await checkHealth(project)
+    healthStatus = healthResult.status
+    steps.push({
+      step: "health",
+      status: healthResult.status === "pass" ? "success" : "failure",
+      message: healthResult.detail ?? (healthResult.status === "pass" ? "Health check passed" : "Health check failed"),
+      durationMs: healthResult.durationMs,
+    })
+
+    // Auto restart on health failure
+    if (restartMode === "auto" && healthResult.status === "fail") {
+      const restartStart = Date.now()
+      const result = await processManager.restart(project)
+      const durationMs = Date.now() - restartStart
+      steps.push({
+        step: "restart",
+        status: result.success ? "success" : "failure",
+        message: `Auto-restart triggered (health failed): ${result.message}`,
+        durationMs,
+      })
+      restartRun = { status: result.success ? "success" : "failure", reason: `Health failure triggered restart: ${result.message}`, durationMs }
+
+      // Re-check health after restart
+      const retryHealth = await checkHealth(project)
+      healthStatus = retryHealth.status
+      steps.push({
+        step: "health-retry",
+        status: retryHealth.status === "pass" ? "success" : "failure",
+        message: retryHealth.detail ?? (retryHealth.status === "pass" ? "Health check passed after restart" : "Health check still failing after restart"),
+        durationMs: retryHealth.durationMs,
+      })
+    }
+  }
+
+  await logRun(buildReport({
+    runId, projectId: project.id, startedAt, branch, dryRun,
+    durationMs: Date.now() - runStart,
+    steps, updated, reason, installRun, restartRun, healthStatus,
+  }))
+}
+
+// ── Route ─────────────────────────────────────────────────────────────────────
+
 export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
   "/update",
-  async ({ params, body }) => {
+  async ({ params, body, set }) => {
     const project = requireProject(params.id)
     const branch = body.branch ?? project.defaultBranch
     const installMode: InstallMode = body.installMode ?? "auto"
     const restartMode: RestartMode = body.restartMode ?? "auto"
     const dryRun = body.dryRun ?? false
+    const background = body.background ?? false
 
     const runId = makeId()
     const startedAt = new Date().toISOString()
@@ -45,10 +217,8 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
     let installRun: InstallRunResult = { status: "skipped", reason: "not reached" }
     let restartRun: RestartRunResult = { status: "skipped", reason: "not reached" }
     let healthStatus: RunReport["healthStatus"] = "skipped"
-    let updated = false
-    let reason = ""
 
-    // ── Step 1: Precheck ────────────────────────────────────────────────────
+    // ── Step 1: Precheck (always synchronous) ────────────────────────────────
     const precheckStart = Date.now()
     const statusCheck = await gitStatus(project.repoPath)
     const precheckStep: StepResult = {
@@ -62,7 +232,7 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
     steps.push(precheckStep)
 
     if (!statusCheck.clean) {
-      reason = "Aborted: working tree has uncommitted changes"
+      const reason = "Aborted: working tree has uncommitted changes"
       const report = buildReport({
         runId, projectId: project.id, startedAt, branch, dryRun,
         durationMs: Date.now() - runStart, steps, updated: false, reason,
@@ -74,7 +244,47 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
       return report
     }
 
-    // ── Step 2: Fetch ────────────────────────────────────────────────────────
+    // ── Background path ───────────────────────────────────────────────────────
+    if (background) {
+      set.status = 202
+
+      // Write a stub log entry so there is always a record for this runId, even
+      // if the process is killed by hot-reload before runBackgroundSteps finishes.
+      // A second, complete entry will be appended when the steps finish normally.
+      await logRun(buildReport({
+        runId, projectId: project.id, startedAt, branch, dryRun,
+        durationMs: 0, steps,
+        updated: false,
+        reason: "background run accepted — in progress",
+        installRun: { status: "skipped", reason: "pending" },
+        restartRun: { status: "skipped", reason: "pending" },
+        healthStatus: "skipped",
+      }))
+
+      // setImmediate fires after Elysia has queued the HTTP response for sending,
+      // so the client receives the 202 before any git/filesystem operations begin.
+      setImmediate(() => {
+        runBackgroundSteps({ project, runId, startedAt, runStart, branch, installMode, restartMode, dryRun, steps })
+          .catch((err) => console.error(`[update] background run ${runId} failed:`, err))
+      })
+
+      const accepted: UpdateAccepted = {
+        runId,
+        projectId: project.id,
+        startedAt,
+        branch,
+        status: "accepted",
+        message: "Update accepted — running in background. Poll /logs for the result.",
+      }
+      return accepted
+    }
+
+    // ── Synchronous path (background === false, original behavior) ────────────
+
+    let updated = false
+    let reason = ""
+
+    // ── Step 2: Fetch ──────────────────────────────────────────────────────────
     if (!dryRun) {
       const fetchStep = await gitFetch(project.repoPath)
       steps.push(fetchStep)
@@ -88,7 +298,7 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
       steps.push(skipped("fetch", "dry run"))
     }
 
-    // ── Step 3: Checkout ─────────────────────────────────────────────────────
+    // ── Step 3: Checkout ───────────────────────────────────────────────────────
     if (!dryRun) {
       const checkoutStep = await gitCheckout(project.repoPath, branch)
       steps.push(checkoutStep)
@@ -102,7 +312,7 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
       steps.push(skipped("checkout", "dry run"))
     }
 
-    // ── Step 4: Pull ─────────────────────────────────────────────────────────
+    // ── Step 4: Pull ───────────────────────────────────────────────────────────
     if (!dryRun) {
       const pullStep = await gitPull(project.repoPath, branch)
       steps.push(pullStep)
@@ -119,7 +329,7 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
       reason = "Dry run — no mutations applied"
     }
 
-    // ── Step 5: Dependency check ─────────────────────────────────────────────
+    // ── Step 5: Dependency check ───────────────────────────────────────────────
     let needsInstall = false
     if (!dryRun) {
       const depStart = Date.now()
@@ -134,7 +344,7 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
       steps.push(skipped("depCheck", "dry run"))
     }
 
-    // ── Step 6: Install ──────────────────────────────────────────────────────
+    // ── Step 6: Install ────────────────────────────────────────────────────────
     if (dryRun || installMode === "never") {
       const skipReason = dryRun ? "dry run" : "installMode=never"
       steps.push(skipped("install", skipReason))
@@ -152,7 +362,7 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
       installRun = { status: "skipped", reason: "no dependency changes" }
     }
 
-    // ── Step 7: Restart ──────────────────────────────────────────────────────
+    // ── Step 7: Restart ────────────────────────────────────────────────────────
     let healthCheckNeeded = !dryRun
 
     if (dryRun || restartMode === "never") {
@@ -176,7 +386,7 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
       restartRun = { status: "skipped", reason: "restartMode=auto — deferring to health check result" }
     }
 
-    // ── Step 8: Health check ─────────────────────────────────────────────────
+    // ── Step 8: Health check ───────────────────────────────────────────────────
     if (!healthCheckNeeded) {
       steps.push(skipped("health", "dry run"))
       healthStatus = "skipped"
@@ -215,7 +425,7 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
       }
     }
 
-    // ── Report ───────────────────────────────────────────────────────────────
+    // ── Report ─────────────────────────────────────────────────────────────────
     const report = buildReport({
       runId, projectId: project.id, startedAt, branch, dryRun,
       durationMs: Date.now() - runStart,
@@ -231,6 +441,7 @@ export const updateRoute = new Elysia({ prefix: "/projects/:id" }).post(
       installMode: t.Optional(t.Union([t.Literal("auto"), t.Literal("always"), t.Literal("never")])),
       restartMode: t.Optional(t.Union([t.Literal("auto"), t.Literal("always"), t.Literal("never")])),
       dryRun: t.Optional(t.Boolean()),
+      background: t.Optional(t.Boolean()),
     }),
     detail: { summary: "Trigger git update workflow", tags: ["Update"] },
   }

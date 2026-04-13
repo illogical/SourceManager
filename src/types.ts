@@ -85,4 +85,14 @@ export interface UpdateRequest {
   installMode?: InstallMode
   restartMode?: RestartMode
   dryRun?: boolean
+  background?: boolean
+}
+
+export interface UpdateAccepted {
+  runId: string
+  projectId: string
+  startedAt: string
+  branch: string
+  status: "accepted"
+  message: string
 }
