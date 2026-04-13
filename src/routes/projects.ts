@@ -1,5 +1,6 @@
 import Elysia, { t } from "elysia"
 import { getConfig } from "../config"
+import { checkHealth } from "../services/healthCheck"
 import { processManager } from "../services/processManager"
 import { readRecentLogs } from "../services/runLogger"
 
@@ -13,13 +14,19 @@ export const projectsRoute = new Elysia()
           const processState = processManager.getProcess(project.id)
           const recentLogs = await readRecentLogs(project.id, 1)
           const lastRun = recentLogs[0] ?? null
+          const managedRunning = processManager.isRunning(project.id)
+          let running = managedRunning
+          if (!managedRunning && project.healthUrl) {
+            const health = await checkHealth(project)
+            running = health.status === "pass"
+          }
           return {
             id: project.id,
             defaultBranch: project.defaultBranch,
             port: project.port,
             healthUrl: project.healthUrl,
             healthMode: project.healthMode,
-            running: processManager.isRunning(project.id),
+            running,
             process: processState
               ? {
                   pid: processState.pid,
