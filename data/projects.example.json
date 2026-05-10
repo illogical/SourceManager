@@ -4,29 +4,55 @@
     "token": "replace-with-a-strong-secret-token",
     "allowedIps": []
   },
-  "projects": [
+  "repos": [
     {
       "id": "my-web-app",
-      "repoPath": "C:\\LocalDev\\Projects\\my-web-app",
+      "displayName": "My Web App",
+      "repoPath": "/home/user/projects/my-web-app",
       "defaultBranch": "main",
-      "healthUrl": "http://localhost:3000/health",
-      "healthMode": "ping",
-      "port": 3000,
-      "packageManager": "auto",
-      "scriptName": "dev",
-      "installCommand": "bun install",
-      "allowedIps": []
+      "services": [
+        {
+          "id": "my-web-app-web",
+          "displayName": "Web",
+          "packageManager": "auto",
+          "scriptName": "dev",
+          "port": 3000,
+          "healthUrl": "http://localhost:3000/health",
+          "healthMode": "ping",
+          "tags": ["web"],
+          "allowedIps": []
+        },
+        {
+          "id": "my-web-app-api",
+          "displayName": "API",
+          "packageManager": "bun",
+          "scriptName": "api",
+          "port": 8080,
+          "healthUrl": "http://localhost:8080/health",
+          "healthMode": "full",
+          "tags": ["api"],
+          "allowedIps": ["192.168.1.0/24"]
+        }
+      ]
     },
     {
-      "id": "my-api",
-      "repoPath": "C:\\LocalDev\\Projects\\my-api",
+      "id": "my-backend",
+      "displayName": "My Backend",
+      "repoPath": "/home/user/projects/my-backend",
       "defaultBranch": "main",
-      "healthUrl": "http://localhost:8080/health",
-      "healthMode": "full",
-      "port": 8080,
-      "packageManager": "bun",
-      "scriptName": "dev",
-      "allowedIps": ["192.168.1.0/24"]
+      "services": [
+        {
+          "id": "my-backend-server",
+          "displayName": "Server",
+          "packageManager": "npm",
+          "scriptName": "start:dev",
+          "port": 4000,
+          "healthUrl": "http://localhost:4000/health",
+          "healthMode": "full",
+          "tags": ["backend"],
+          "allowedIps": []
+        }
+      ]
     }
   ]
 }

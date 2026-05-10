@@ -3,14 +3,11 @@ import { swagger } from "@elysiajs/swagger"
 import { loadConfig } from "./config"
 import { requestLoggerMiddleware } from "./middleware/requestLogger"
 import { healthRoute } from "./routes/health"
-import { projectsRoute } from "./routes/projects"
-import { projectRoute } from "./routes/project"
+import { reposRoute } from "./routes/repos"
 import { updateRoute } from "./routes/update"
-import { lifecycleRoute } from "./routes/lifecycle"
-import { logsRoute } from "./routes/logs"
 import { processManager } from "./services/processManager"
 import { rotateOldLogs } from "./services/runLogger"
-import { ProjectNotFoundError } from "./config"
+import { RepoNotFoundError, ServiceNotFoundError } from "./config"
 import { validateToken } from "./middleware/auth"
 
 // ── Startup ────────────────────────────────────────────────────────────────
@@ -80,16 +77,13 @@ const app = new Elysia()
           return { error: "Unauthorized: missing or invalid X-DevServer-Token" }
         }
       })
-      .use(projectsRoute)
-      .use(projectRoute)
+      .use(reposRoute)
       .use(updateRoute)
-      .use(lifecycleRoute)
-      .use(logsRoute)
   )
 
   // Error handling
   .onError(({ error, set }) => {
-    if (error instanceof ProjectNotFoundError) {
+    if (error instanceof RepoNotFoundError || error instanceof ServiceNotFoundError) {
       set.status = 404
       return { error: error.message }
     }
@@ -109,7 +103,7 @@ console.log(`
 ║          SourceManager API — Running             ║
 ╚══════════════════════════════════════════════════╝
   Port:    ${String(config.server.port).padEnd(38)}
-  Projects: ${String(config.projects.length).padEnd(37)}
+  Repos:    ${String(config.repos.length).padEnd(38)}
   Swagger: http://localhost:${config.server.port}/swagger${" ".repeat(Math.max(0, 18 - String(config.server.port).length))}
   Started: ${new Date().toLocaleString().padEnd(38)}
 

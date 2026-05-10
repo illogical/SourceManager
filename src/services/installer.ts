@@ -1,5 +1,5 @@
 import { join } from "path"
-import type { ProjectConfig, StepResult } from "../types"
+import type { ServiceConfig, StepResult } from "../types"
 
 type PackageManager = "bun" | "npm" | "yarn" | "pnpm"
 
@@ -19,22 +19,25 @@ export async function detectPackageManager(repoPath: string): Promise<PackageMan
   return "bun" // default
 }
 
-export async function runInstall(project: ProjectConfig): Promise<StepResult> {
+export async function runInstall(
+  repoPath: string,
+  service: Pick<ServiceConfig, "packageManager" | "scriptName" | "installCommand">
+): Promise<StepResult> {
   const start = Date.now()
 
   let installCommand: string[]
-  if (project.installCommand) {
-    installCommand = project.installCommand.split(" ").filter(Boolean)
+  if (service.installCommand) {
+    installCommand = service.installCommand.split(" ").filter(Boolean)
   } else {
-    const pm = project.packageManager === "auto"
-      ? await detectPackageManager(project.repoPath)
-      : project.packageManager
+    const pm = service.packageManager === "auto"
+      ? await detectPackageManager(repoPath)
+      : service.packageManager
     installCommand = [pm, "install"]
   }
 
   const [cmd, ...args] = installCommand
   const proc = Bun.spawn([cmd, ...args], {
-    cwd: project.repoPath,
+    cwd: repoPath,
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -59,7 +62,8 @@ export async function runInstall(project: ProjectConfig): Promise<StepResult> {
   return {
     step: "install",
     status: "success",
-    message: `Install completed (${installCommand.join(" ")})`,
+    message: `Installed successfully (${installCommand.join(" ")})`,
     durationMs,
   }
 }
+

@@ -7,13 +7,16 @@
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
     "test": "bun test tests/config.test.ts tests/middleware tests/services && bun test tests/routes",
-    "test:watch": "bun test tests/config.test.ts tests/middleware tests/services --watch"
+    "test:watch": "bun test tests/config.test.ts tests/middleware tests/services --watch",
+    "test:vitest": "bunx vitest run",
+    "test:all": "bun run test && bun run test:vitest"
   },
   "dependencies": {
     "elysia": "^1.3.0",
     "@elysiajs/swagger": "^1.3.0"
   },
   "devDependencies": {
-    "bun-types": "latest"
+    "bun-types": "latest",
+    "vitest": "^4.1.5"
   }
 }

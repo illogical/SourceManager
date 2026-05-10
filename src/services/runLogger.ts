@@ -1,7 +1,10 @@
-import { join } from "path"
+import { join, dirname } from "path"
+import { fileURLToPath } from "url"
+import { readFile, writeFile, appendFile, mkdir, access } from "node:fs/promises"
 import type { RunReport } from "../types"
 
-const LOG_DIR = join(import.meta.dir, "..", "..", "data", "logs")
+const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
+const LOG_DIR = join(_dir, "..", "..", "data", "logs")
 const KEEP_DAYS = 7
 
 function todayStr(): string {
@@ -13,33 +16,44 @@ function runLogPath(date: string): string {
 }
 
 async function ensureLogDir(): Promise<void> {
-  await Bun.write(join(LOG_DIR, ".keep"), "")
+  await mkdir(LOG_DIR, { recursive: true })
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function logRun(report: RunReport): Promise<void> {
   await ensureLogDir()
   const line = JSON.stringify(report) + "\n"
   const path = runLogPath(todayStr())
-
-  // Append to file
-  const existing = await Bun.file(path).exists() ? await Bun.file(path).text() : ""
-  await Bun.write(path, existing + line)
+  await appendFile(path, line, "utf-8")
 }
 
-export async function readRecentLogs(projectId: string, n = 20): Promise<RunReport[]> {
+export async function readRecentLogs(serviceId: string, n = 20): Promise<RunReport[]> {
   const path = runLogPath(todayStr())
-  const file = Bun.file(path)
 
-  if (!(await file.exists())) return []
+  if (!(await fileExists(path))) return []
 
-  const content = await file.text()
+  let content: string
+  try {
+    content = await readFile(path, "utf-8")
+  } catch {
+    return []
+  }
+
   const lines = content.split("\n").filter(Boolean)
 
   const entries: RunReport[] = []
   for (const line of lines) {
     try {
       const entry = JSON.parse(line) as RunReport
-      if (entry.projectId === projectId) entries.push(entry)
+      if (entry.serviceId === serviceId) entries.push(entry)
     } catch {
       // Skip malformed lines
     }
@@ -70,3 +84,4 @@ export async function rotateOldLogs(): Promise<void> {
     }
   }
 }
+

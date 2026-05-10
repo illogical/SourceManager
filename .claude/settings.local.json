@@ -9,7 +9,9 @@
       "Bash(bun test --help)",
       "Bash(bun test tests/routes)",
       "Bash(bun test tests/config.test.ts tests/middleware tests/services)",
-      "Bash(bun run test)"
+      "Bash(bun run test)",
+      "Bash(curl -s http://tiny-tower:17106/health)",
+      "Bash(bun test:*)"
     ]
   }
 }

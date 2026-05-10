@@ -6,7 +6,6 @@
  */
 import { describe, it, expect, afterAll } from "bun:test"
 import { checkHealth } from "../../src/services/healthCheck"
-import type { ProjectConfig } from "../../src/types"
 
 // Track servers for cleanup
 const servers: ReturnType<typeof Bun.serve>[] = []
@@ -21,18 +20,10 @@ afterAll(() => {
   for (const s of servers) s.stop(true)
 })
 
-function makeProject(healthUrl: string, overrides: Partial<ProjectConfig> = {}): ProjectConfig {
+function makeProject(healthUrl: string, overrides: { healthMode?: "ping" | "full" } = {}) {
   return {
-    id: "test",
-    repoPath: "C:\\dev\\test",
-    defaultBranch: "main",
     healthUrl,
-    healthMode: "ping",
-    port: 3000,
-    packageManager: "auto",
-    scriptName: "dev",
-    allowedIps: [],
-    ...overrides,
+    healthMode: overrides.healthMode ?? "ping" as const,
   }
 }
 

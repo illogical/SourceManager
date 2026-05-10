@@ -1,14 +1,14 @@
-import type { HealthCheckResult, ProjectConfig } from "../types"
+import type { HealthCheckResult, HealthCheckable } from "../types"
 
 const TIMEOUT_MS = 5000
 
-export async function checkHealth(project: ProjectConfig): Promise<HealthCheckResult> {
+export async function checkHealth(service: HealthCheckable): Promise<HealthCheckResult> {
   const start = Date.now()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
-    const response = await fetch(project.healthUrl, { signal: controller.signal })
+    const response = await fetch(service.healthUrl, { signal: controller.signal })
     const durationMs = Date.now() - start
     clearTimeout(timer)
 
@@ -20,7 +20,7 @@ export async function checkHealth(project: ProjectConfig): Promise<HealthCheckRe
       }
     }
 
-    if (project.healthMode === "full") {
+    if (service.healthMode === "full") {
       let body: unknown
       try {
         body = await response.json()

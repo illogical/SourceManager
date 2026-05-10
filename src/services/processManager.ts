@@ -1,41 +1,81 @@
-import { join } from "path"
+import { join, dirname } from "path"
+import { fileURLToPath } from "url"
+import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { detectPackageManager } from "./installer"
-import type { PortEntry, ProcessState, ProjectConfig } from "../types"
+import { checkHealth } from "./healthCheck"
+import type { LifecycleState, PortEntry, RepoConfig, ServiceConfig, ServiceProcessState } from "../types"
 
-const STATE_PATH = join(import.meta.dir, "..", "..", "data", "state.json")
+const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
+const STATE_PATH = join(_dir, "..", "..", "data", "state.json")
+const HEALTH_POLL_INTERVAL_MS = 1_000
+const HEALTH_POLL_TIMEOUT_MS = 30_000
 
 interface StateFile {
-  processes: Record<string, ProcessState>
+  processes: Record<string, ServiceProcessState>
 }
 
 interface StartResult {
   success: boolean
   message: string
+  lifecycleState?: LifecycleState
+  pid?: number
   portKillResult?: { killed: boolean; previousPid: number; error?: string }
 }
 
-class ProcessManager {
-  private processes = new Map<string, ProcessState>()
-  private portMap = new Map<number, string>() // port → projectId
+interface StopResult {
+  success: boolean
+  alreadyStopped: boolean
+  message: string
+}
+
+export class ProcessManager {
+  private processes = new Map<string, ServiceProcessState>()
+  private portMap = new Map<number, string>() // port → serviceId
+
+  // ── Overridable for testing ──────────────────────────────────────────────────
+
+  _checkHealth: (service: ServiceConfig) => ReturnType<typeof checkHealth> = checkHealth
+  _isProcessAlive: (pid: number) => boolean = isProcessAlive
+  _findPidOnPort: (port: number) => Promise<number | null> = findPidOnPort
+  _spawnProcess: (command: string[], opts: object) => { pid: number; exited: Promise<number> } = (cmd, opts) => {
+    const proc = Bun.spawn(cmd as string[], opts as Parameters<typeof Bun.spawn>[1])
+    return { pid: proc.pid, exited: proc.exited }
+  }
+
+  // ── Startup ──────────────────────────────────────────────────────────────────
 
   async init(): Promise<void> {
     await this.loadState()
   }
 
-  // ─── State Persistence ────────────────────────────────────────────────────
+  // ── State persistence ────────────────────────────────────────────────────────
 
   private async loadState(): Promise<void> {
-    const file = Bun.file(STATE_PATH)
-    if (!(await file.exists())) return
+    let content: string
+    try {
+      content = await readFile(STATE_PATH, "utf-8")
+    } catch {
+      return
+    }
 
     try {
-      const data: StateFile = await file.json()
-      for (const [projectId, state] of Object.entries(data.processes ?? {})) {
-        if (isProcessAlive(state.pid)) {
-          this.processes.set(projectId, state)
-          this.portMap.set(state.port, projectId)
-        } else {
-          console.log(`[ProcessManager] Pruned stale PID ${state.pid} for "${projectId}"`)
+      const data: StateFile = JSON.parse(content) as StateFile
+      for (const [serviceId, state] of Object.entries(data.processes ?? {})) {
+        if (!this._isProcessAlive(state.pid)) {
+          console.log(`[ProcessManager] Pruned stale PID ${state.pid} for "${serviceId}"`)
+          continue
+        }
+        if (state.lifecycleState === "starting") {
+          // Restarted mid-startup — mark as failed
+          this.processes.set(serviceId, {
+            ...state,
+            lifecycleState: "failed",
+            lastError: "SourceManager restarted while service was starting",
+          })
+          this.portMap.set(state.port, serviceId)
+        } else if (state.lifecycleState === "running") {
+          this.processes.set(serviceId, state)
+          this.portMap.set(state.port, serviceId)
         }
       }
     } catch (err) {
@@ -45,45 +85,69 @@ class ProcessManager {
 
   private async saveState(): Promise<void> {
     const data: StateFile = { processes: Object.fromEntries(this.processes) }
-    await Bun.write(STATE_PATH, JSON.stringify(data, null, 2))
+    try {
+      await mkdir(dirname(STATE_PATH), { recursive: true })
+      await writeFile(STATE_PATH, JSON.stringify(data, null, 2))
+    } catch (err) {
+      console.warn(`[ProcessManager] Could not save state: ${(err as Error).message}`)
+    }
   }
 
-  // ─── Port Management ──────────────────────────────────────────────────────
+  // ── Lifecycle state helpers ──────────────────────────────────────────────────
+
+  private setLifecycleState(serviceId: string, state: LifecycleState, extra?: Partial<ServiceProcessState>): void {
+    const existing = this.processes.get(serviceId)
+    if (!existing) return
+    this.processes.set(serviceId, { ...existing, lifecycleState: state, ...extra })
+  }
+
+  private async setRunning(serviceId: string): Promise<void> {
+    this.setLifecycleState(serviceId, "running", { readySince: new Date().toISOString(), lastError: undefined })
+    await this.saveState()
+  }
+
+  private async setFailed(serviceId: string, error: string): Promise<void> {
+    const state = this.processes.get(serviceId)
+    if (state) {
+      this.portMap.delete(state.port)
+    }
+    this.setLifecycleState(serviceId, "failed", { lastError: error })
+    await this.saveState()
+    console.error(`[ProcessManager] "${serviceId}" failed: ${error}`)
+  }
+
+  // ── Port management ──────────────────────────────────────────────────────────
 
   private async killPort(port: number): Promise<{ killed: boolean; previousPid: number; error?: string }> {
-    const existingProjectId = this.portMap.get(port)
+    const existingServiceId = this.portMap.get(port)
 
-    if (existingProjectId) {
-      // We own this process — stop it cleanly
-      const state = this.processes.get(existingProjectId)
+    if (existingServiceId) {
+      const state = this.processes.get(existingServiceId)
       if (state) {
-        console.log(`[ProcessManager] Auto-killing PID ${state.pid} (project "${existingProjectId}") to free port ${port}`)
+        console.log(`[ProcessManager] Auto-killing PID ${state.pid} ("${existingServiceId}") to free port ${port}`)
         const result = await this.killPid(state.pid)
-        this.processes.delete(existingProjectId)
+        this.processes.delete(existingServiceId)
         this.portMap.delete(port)
         await this.saveState()
         return { killed: result.success, previousPid: state.pid, error: result.error }
       }
     }
 
-    // Port may be in use by an external process — check with OS
-    const externalPid = await findPidOnPort(port)
+    const externalPid = await this._findPidOnPort(port)
     if (externalPid) {
       console.log(`[ProcessManager] Auto-killing external PID ${externalPid} on port ${port}`)
       const result = await this.killPid(externalPid)
       return { killed: result.success, previousPid: externalPid, error: result.error }
     }
 
-    return { killed: true, previousPid: 0 } // port was already free
+    return { killed: true, previousPid: 0 }
   }
 
   private async killPid(pid: number): Promise<{ success: boolean; error?: string }> {
     try {
       process.kill(pid, "SIGTERM")
-      // Give the process a moment to exit
       await new Promise((resolve) => setTimeout(resolve, 500))
-      if (isProcessAlive(pid)) {
-        // Force kill if still running
+      if (this._isProcessAlive(pid)) {
         process.kill(pid, "SIGKILL")
         await new Promise((resolve) => setTimeout(resolve, 200))
       }
@@ -96,130 +160,184 @@ class ProcessManager {
     }
   }
 
-  // ─── Lifecycle ────────────────────────────────────────────────────────────
+  // ── Lifecycle ────────────────────────────────────────────────────────────────
 
-  async start(project: ProjectConfig): Promise<StartResult> {
+  async start(repo: RepoConfig, service: ServiceConfig): Promise<StartResult> {
+    // Idempotent for already-starting or running services
+    const existing = this.processes.get(service.id)
+    if (existing?.lifecycleState === "starting" || existing?.lifecycleState === "running") {
+      return {
+        success: true,
+        message: `Service "${service.id}" is already ${existing.lifecycleState}`,
+        lifecycleState: existing.lifecycleState,
+        pid: existing.pid,
+      }
+    }
+
     let portKillResult: StartResult["portKillResult"]
-
-    // Check if port is in use
-    const portOwner = this.portMap.get(project.port)
-    const externalPid = await findPidOnPort(project.port)
+    const portOwner = this.portMap.get(service.port)
+    const externalPid = await this._findPidOnPort(service.port)
 
     if (portOwner || externalPid) {
-      portKillResult = await this.killPort(project.port)
+      portKillResult = await this.killPort(service.port)
       if (!portKillResult.killed) {
         return {
           success: false,
-          message: `Port ${project.port} is in use and could not be freed: ${portKillResult.error}`,
+          message: `Port ${service.port} is in use and could not be freed: ${portKillResult.error}`,
           portKillResult,
         }
       }
-      // Brief wait for port to be fully released
       await new Promise((resolve) => setTimeout(resolve, 300))
     }
 
     // Build start command
-    const pm = project.packageManager === "auto"
-      ? await detectPackageManager(project.repoPath)
-      : project.packageManager
+    const pm = service.packageManager === "auto"
+      ? await detectPackageManager(repo.repoPath)
+      : service.packageManager
 
-    const command = [pm, "run", project.scriptName]
-    console.log(`[ProcessManager] Starting "${project.id}": ${command.join(" ")} in ${project.repoPath}`)
+    const command = [pm, "run", service.scriptName]
+    console.log(`[ProcessManager] Starting "${service.id}": ${command.join(" ")} in ${repo.repoPath}`)
 
-    const proc = Bun.spawn(command, {
-      cwd: project.repoPath,
+    const proc = this._spawnProcess(command, {
+      cwd: repo.repoPath,
       stdout: "inherit",
       stderr: "inherit",
       env: { ...process.env },
     })
 
-    const state: ProcessState = {
-      projectId: project.id,
+    const state: ServiceProcessState = {
+      serviceId: service.id,
+      repoId: repo.id,
       pid: proc.pid,
-      port: project.port,
+      port: service.port,
       startedAt: new Date().toISOString(),
       command: command.join(" "),
+      lifecycleState: "starting",
     }
 
-    this.processes.set(project.id, state)
-    this.portMap.set(project.port, project.id)
+    this.processes.set(service.id, state)
+    this.portMap.set(service.port, service.id)
     await this.saveState()
 
-    // Monitor for immediate exit (crash at startup)
+    // Monitor for immediate exit
     proc.exited.then(async (code) => {
-      if (this.processes.get(project.id)?.pid === proc.pid) {
-        console.error(`[ProcessManager] Process "${project.id}" (PID ${proc.pid}) exited with code ${code}`)
-        this.processes.delete(project.id)
-        this.portMap.delete(project.port)
+      const current = this.processes.get(service.id)
+      if (current?.pid === proc.pid && current.lifecycleState === "starting") {
+        await this.setFailed(service.id, `Process exited with code ${code} before becoming ready`)
+      } else if (current?.pid === proc.pid && current.lifecycleState === "running") {
+        console.error(`[ProcessManager] "${service.id}" (PID ${proc.pid}) exited unexpectedly with code ${code}`)
+        this.processes.delete(service.id)
+        this.portMap.delete(service.port)
         await this.saveState()
       }
-    })
+    }).catch(() => {})
+
+    // Launch background health poll — do not await
+    this.pollUntilReady(service.id, service, proc.pid).catch(() => {})
 
     return {
       success: true,
-      message: `Started "${project.id}" with PID ${proc.pid} on port ${project.port}`,
+      message: `Service "${service.id}" starting with PID ${proc.pid} on port ${service.port}`,
+      lifecycleState: "starting",
+      pid: proc.pid,
       portKillResult,
     }
   }
 
-  async stop(projectId: string): Promise<{ success: boolean; message: string }> {
-    const state = this.processes.get(projectId)
+  async stop(serviceId: string): Promise<StopResult> {
+    const state = this.processes.get(serviceId)
     if (!state) {
-      return { success: false, message: `No running process found for "${projectId}"` }
+      return { success: true, alreadyStopped: true, message: `Service "${serviceId}" was not running` }
     }
 
-    console.log(`[ProcessManager] Stopping "${projectId}" (PID ${state.pid})`)
+    console.log(`[ProcessManager] Stopping "${serviceId}" (PID ${state.pid})`)
     const result = await this.killPid(state.pid)
-    this.processes.delete(projectId)
+    this.processes.delete(serviceId)
     this.portMap.delete(state.port)
     await this.saveState()
 
     if (!result.success) {
-      return { success: false, message: `Stop attempted but may have failed: ${result.error}` }
+      return { success: false, alreadyStopped: false, message: `Stop attempted but may have failed: ${result.error}` }
     }
-    return { success: true, message: `Stopped "${projectId}" (PID ${state.pid})` }
+    return { success: true, alreadyStopped: false, message: `Stopped "${serviceId}" (PID ${state.pid})` }
   }
 
-  async restart(project: ProjectConfig): Promise<StartResult> {
-    // Stop if running
-    const state = this.processes.get(project.id)
-    if (state) {
-      await this.stop(project.id)
-      await new Promise((resolve) => setTimeout(resolve, 300))
+  async restart(repo: RepoConfig, service: ServiceConfig): Promise<StartResult> {
+    await this.stop(service.id)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    return this.start(repo, service)
+  }
+
+  // ── Background health poll ────────────────────────────────────────────────────
+
+  private async pollUntilReady(
+    serviceId: string,
+    service: ServiceConfig,
+    expectedPid: number,
+  ): Promise<void> {
+    const deadline = Date.now() + HEALTH_POLL_TIMEOUT_MS
+
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_INTERVAL_MS))
+
+      const current = this.processes.get(serviceId)
+      if (!current || current.pid !== expectedPid || current.lifecycleState !== "starting") return
+
+      if (!this._isProcessAlive(current.pid)) {
+        await this.setFailed(serviceId, "Process exited before becoming ready")
+        return
+      }
+
+      const health = await this._checkHealth(service)
+      if (health.status === "pass") {
+        await this.setRunning(serviceId)
+        console.log(`[ProcessManager] "${serviceId}" is ready (${health.durationMs}ms)`)
+        return
+      }
     }
-    return this.start(project)
+
+    const current = this.processes.get(serviceId)
+    if (current?.pid === expectedPid && current.lifecycleState === "starting") {
+      await this.setFailed(serviceId, `Health check did not pass within ${HEALTH_POLL_TIMEOUT_MS / 1000}s`)
+    }
   }
 
-  // ─── Queries ──────────────────────────────────────────────────────────────
+  // ── Queries ──────────────────────────────────────────────────────────────────
 
-  getProcess(projectId: string): ProcessState | null {
-    return this.processes.get(projectId) ?? null
+  getProcess(serviceId: string): ServiceProcessState | null {
+    return this.processes.get(serviceId) ?? null
   }
 
-  getAllProcesses(): ProcessState[] {
+  getAllProcesses(): ServiceProcessState[] {
     return Array.from(this.processes.values())
   }
 
   getPortEntries(): PortEntry[] {
-    return Array.from(this.portMap.entries()).map(([port, projectId]) => {
-      const state = this.processes.get(projectId)
+    return Array.from(this.portMap.entries()).map(([port, serviceId]) => {
+      const state = this.processes.get(serviceId)
       return {
         port,
-        projectId,
+        serviceId,
         pid: state?.pid ?? 0,
-        status: state ? "running" : "stopped",
+        status: state?.lifecycleState === "running" ? "running" : "stopped",
       }
     })
   }
 
-  isRunning(projectId: string): boolean {
-    const state = this.processes.get(projectId)
+  isRunning(serviceId: string): boolean {
+    const state = this.processes.get(serviceId)
     if (!state) return false
-    return isProcessAlive(state.pid)
+    return state.lifecycleState === "running" && this._isProcessAlive(state.pid)
+  }
+
+  getLifecycleState(serviceId: string): LifecycleState {
+    const state = this.processes.get(serviceId)
+    if (!state) return "stopped"
+    return state.lifecycleState
   }
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function isProcessAlive(pid: number): boolean {
   try {
