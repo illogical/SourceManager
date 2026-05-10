@@ -1,0 +1,50 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.repoGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.repoName {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #111827;
+  padding-bottom: 6px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.services {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-left: 4px;
+}
+
+.loading {
+  color: #6b7280;
+  font-size: 0.9rem;
+  padding: 32px 0;
+  text-align: center;
+}
+
+.empty {
+  color: #6b7280;
+  font-size: 0.9rem;
+  padding: 32px 0;
+  text-align: center;
+}
+
+.errorBanner {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #dc2626;
+  padding: 12px 16px;
+  font-size: 0.9rem;
+}

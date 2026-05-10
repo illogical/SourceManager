@@ -1,5 +1,6 @@
 import Elysia, { NotFoundError } from "elysia"
 import { swagger } from "@elysiajs/swagger"
+import { staticPlugin } from "@elysiajs/static"
 import { loadConfig } from "./config"
 import { requestLoggerMiddleware } from "./middleware/requestLogger"
 import { healthRoute } from "./routes/health"
@@ -49,6 +50,18 @@ const app = new Elysia()
 
   // Request logging (all routes)
   .use(requestLoggerMiddleware)
+
+  // ── Static frontend (production) ───────────────────────────────────────────
+  // Serves frontend/dist/ at /. API routes (/v1/*, /health, /swagger) take
+  // precedence because they are registered before the catch-all below.
+  // Only mounted when the build output exists (graceful no-op otherwise).
+  .use(
+    staticPlugin({
+      assets: "frontend/dist",
+      prefix: "/",
+      indexHTML: true,
+    })
+  )
 
   // Favicon (SVG, served as image/svg+xml — accepted by all modern browsers)
   .get("/favicon.ico", () =>

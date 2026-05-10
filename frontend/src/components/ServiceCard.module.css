@@ -1,0 +1,78 @@
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.port {
+  font-size: 0.8rem;
+  color: #6b7280;
+  font-family: monospace;
+}
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pid,
+.uptime {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.tailnet {
+  font-size: 0.8rem;
+  color: #4b5563;
+}
+
+.tailnetUrl {
+  font-family: monospace;
+  color: #2563eb;
+}
+
+.errorMsg {
+  font-size: 0.8rem;
+  color: #dc2626;
+  background: #fef2f2;
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.actionError {
+  font-size: 0.8rem;
+  color: #92400e;
+  background: #fffbeb;
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.controls {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
