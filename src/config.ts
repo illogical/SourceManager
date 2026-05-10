@@ -90,6 +90,10 @@ export function validateConfig(config: AppConfig): void {
   if (!config.server?.port || config.server.port < 1 || config.server.port > 65535) {
     abort("server.port must be a number between 1 and 65535")
   }
+  config.server.frontendPort ??= 5173
+  if (config.server.frontendPort < 1 || config.server.frontendPort > 65535) {
+    abort("server.frontendPort must be a number between 1 and 65535")
+  }
   config.server.allowedIps ??= []
 
   if (!Array.isArray(config.repos)) abort("repos must be an array in projects.json")
@@ -262,4 +266,3 @@ export class ProjectNotFoundError extends Error {
     this.name = "ProjectNotFoundError"
   }
 }
-

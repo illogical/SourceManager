@@ -1,6 +1,7 @@
 {
   "server": {
     "port": 17106,
+    "frontendPort": 17116,
     "token": "replace-with-a-strong-secret-token",
     "allowedIps": []
   },

@@ -49,6 +49,7 @@ Edit `data/projects.json`:
 {
   "server": {
     "port": 17106,
+    "frontendPort": 17116,
     "token": "your-strong-secret-token",
     "allowedIps": []
   },
@@ -87,9 +88,9 @@ This starts two processes concurrently:
 | Process | Command | URL |
 |---------|---------|-----|
 | API (Bun `--watch`) | `bun run dev:backend` | `http://localhost:17106` |
-| Frontend (Vite HMR) | `bun run dev:frontend` | `http://localhost:5173` |
+| Frontend (Vite HMR) | `bun run dev:frontend` | `http://localhost:<server.frontendPort>` (`5173` if omitted) |
 
-Open `http://localhost:5173` in your browser. Vite proxies all `/v1/*`, `/health`, and `/swagger` requests to the Bun API, so everything runs on a single origin — no CORS configuration needed. Both servers support hot-reload: Vite HMR for the React frontend and Bun `--watch` for the API.
+Open the configured frontend URL in your browser. Vite reads `server.frontendPort` from `data/projects.json` and proxies all `/v1/*`, `/health`, and `/swagger` requests to `server.port`, so everything runs on a single origin — no CORS configuration needed. Both servers support hot-reload: Vite HMR for the React frontend and Bun `--watch` for the API. The committed example uses `17116` to avoid the common `5173` collision.
 
 **4. Build and run in production**
 
@@ -243,6 +244,15 @@ All fields are optional. Defaults: branch from repo config, `installMode=auto`, 
 
 ## Config Reference
 
+### Server fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `port` | Yes | Backend API port |
+| `frontendPort` | No | Vite dev server port for `bun run dev:frontend` (default: `5173`) |
+| `token` | Yes | Shared API token expected in `X-DevServer-Token` |
+| `allowedIps` | No | CIDR IP allowlist for the API |
+
 ### Repo fields
 
 | Field | Required | Description |
@@ -378,7 +388,7 @@ src/
 
 frontend/
   index.html            Vite HTML entry point
-  vite.config.ts        Vite config (dev proxy → :17106, builds to frontend/dist/)
+  vite.config.ts        Vite config (dev port/proxy from data/projects.json, builds to frontend/dist/)
   vitest.config.ts      Vitest config for frontend tests (jsdom)
   tsconfig.json         Frontend TypeScript config
   src/
@@ -398,6 +408,7 @@ frontend/
 
 data/
   projects.example.json Example config (committed)
+  projects.localdev.example.json Personalized Windows dev-machine example (committed)
   projects.json         Your config (gitignored)
   state.json            Process state (gitignored)
   logs/                 NDJSON logs (gitignored)

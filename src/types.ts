@@ -2,6 +2,7 @@
 
 export interface ServerConfig {
   port: number
+  frontendPort?: number
   token: string
   allowedIps: string[]
 }

@@ -55,6 +55,18 @@ describe("validateConfig", () => {
       expect(() => validateConfig(cfg)).toThrow(ConfigError)
     })
 
+    it("defaults server.frontendPort when omitted", () => {
+      const cfg = validConfig()
+      validateConfig(cfg)
+      expect(cfg.server.frontendPort).toBe(5173)
+    })
+
+    it("throws ConfigError when server.frontendPort is 0", () => {
+      const cfg = validConfig()
+      cfg.server.frontendPort = 0
+      expect(() => validateConfig(cfg)).toThrow(ConfigError)
+    })
+
     it("throws ConfigError when repos is not an array", () => {
       const cfg = validConfig()
       // @ts-expect-error intentionally invalid

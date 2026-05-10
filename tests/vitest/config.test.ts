@@ -52,6 +52,17 @@ describe("validateConfig — server validation", () => {
     const cfg = validConfig(); (cfg.server as { port: number }).port = 0
     expect(() => validateConfig(cfg)).toThrow(ConfigError)
   })
+
+  it("defaults frontendPort when omitted", () => {
+    const cfg = validConfig()
+    validateConfig(cfg)
+    expect(cfg.server.frontendPort).toBe(5173)
+  })
+
+  it("throws when frontendPort is 0", () => {
+    const cfg = validConfig(); cfg.server.frontendPort = 0
+    expect(() => validateConfig(cfg)).toThrow(ConfigError)
+  })
 })
 
 describe("validateConfig — repo validation", () => {
