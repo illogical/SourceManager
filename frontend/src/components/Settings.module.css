@@ -1,89 +1,549 @@
+/* ── Unauthenticated (no-token) view ─────────────────────────────────────── */
+
 .container {
   max-width: 480px;
-  margin: 48px auto;
-  padding: 32px;
-  background: rgba(11, 18, 32, 0.84);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  margin: 0 auto;
+  padding: 40px 24px;
 }
 
 .heading {
-  margin: 0 0 24px;
-  font-size: 1.1rem;
-  font-weight: 800;
+  font-size: 1.25rem;
+  font-weight: 700;
   color: #f3f8ff;
+  margin: 0 0 8px;
 }
 
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.label {
-  font-size: 0.85rem;
-  font-weight: 750;
+.intro {
+  font-size: 0.875rem;
   color: #b7c7db;
+  margin: 0 0 24px;
 }
 
-.input {
-  padding: 8px 12px;
+/* ── Full settings page ──────────────────────────────────────────────────── */
+
+.page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 20px 60px;
+}
+
+/* Page header: back + title + actions */
+.pageHeader {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  background: #060914;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  margin-bottom: 28px;
+}
+
+.backBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: none;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 7px;
+  color: #79d7ff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.backBtn:hover {
+  background: rgba(121, 215, 255, 0.08);
+  border-color: rgba(121, 215, 255, 0.35);
+}
+
+.pageTitle {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f3f8ff;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.pageActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.cancelBtn {
+  padding: 7px 16px;
+  background: none;
   border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
-  font-size: 0.9rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  outline: none;
-  color: #eef6ff;
-  background: rgba(6, 10, 20, 0.64);
+  border-radius: 7px;
+  color: #b7c7db;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
 
-.input:focus {
-  border-color: rgba(121, 215, 255, 0.7);
-  box-shadow: 0 0 0 3px rgba(121, 215, 255, 0.12);
+.cancelBtn:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: #e5edf8;
 }
 
 .saveBtn {
-  padding: 8px 16px;
-  background: rgba(45, 212, 191, 0.14);
-  color: #9ffce0;
-  border: 1px solid rgba(45, 212, 191, 0.36);
-  border-radius: 8px;
-  font-size: 0.9rem;
-  font-weight: 800;
+  padding: 7px 20px;
+  background: rgba(121, 215, 255, 0.15);
+  border: 1px solid rgba(121, 215, 255, 0.4);
+  border-radius: 7px;
+  color: #79d7ff;
+  font-size: 0.875rem;
+  font-weight: 700;
   cursor: pointer;
-  align-self: flex-start;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.saveBtn:hover:not(:disabled) {
+  background: rgba(121, 215, 255, 0.24);
+  border-color: rgba(121, 215, 255, 0.6);
 }
 
 .saveBtn:disabled {
-  opacity: 0.5;
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* Error banner */
+.errorBanner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(34, 12, 20, 0.9);
+  border: 1px solid rgba(251, 113, 133, 0.35);
+  border-radius: 9px;
+  color: #ff9cad;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+/* Loading / error states */
+.loadingState,
+.loadErrorState {
+  padding: 40px 20px;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #b7c7db;
+}
+
+.loadErrorState {
+  color: #ff9cad;
+}
+
+/* ── Sections ─────────────────────────────────────────────────────────────── */
+
+.section {
+  margin-bottom: 32px;
+}
+
+.sectionHeading {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #79d7ff;
+  margin: 0 0 10px;
+}
+
+.sectionCard {
+  background: rgba(11, 18, 32, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  padding: 20px 20px 16px;
+}
+
+/* ── Repo cards ───────────────────────────────────────────────────────────── */
+
+.repoList {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.repoCard {
+  background: rgba(11, 18, 32, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.repoHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(121, 215, 255, 0.05);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.repoIdPill {
+  font-family: ui-monospace, "Fira Code", monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  background: rgba(121, 215, 255, 0.12);
+  border: 1px solid rgba(121, 215, 255, 0.25);
+  border-radius: 5px;
+  color: #79d7ff;
+}
+
+.repoLabel {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: rgba(121, 215, 255, 0.5);
+}
+
+.repoFields {
+  padding: 16px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Service cards ────────────────────────────────────────────────────────── */
+
+.servicesSection {
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.servicesSectionLabel {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: rgba(148, 163, 184, 0.45);
+  padding: 10px 16px 6px;
+}
+
+.serviceCard {
+  border-top: 1px solid rgba(148, 163, 184, 0.08);
+  padding: 12px 16px 14px;
+  background: rgba(9, 12, 22, 0.5);
+}
+
+.serviceHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.serviceIdPill {
+  font-family: ui-monospace, "Fira Code", monospace;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  background: rgba(45, 212, 191, 0.1);
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  border-radius: 5px;
+  color: #2dd4bf;
+}
+
+.serviceLabel {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: rgba(45, 212, 191, 0.45);
+}
+
+/* ── Field groups ─────────────────────────────────────────────────────────── */
+
+.fieldGroup {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  border-radius: 8px;
+}
+
+.fieldGroupLabel {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: rgba(148, 163, 184, 0.4);
+  margin-bottom: 8px;
+}
+
+/* ── Field layout ─────────────────────────────────────────────────────────── */
+
+.fieldsRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.fieldsRow3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .fieldsRow,
+  .fieldsRow3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.fieldHasError .input,
+.fieldHasError .textarea,
+.fieldHasError .select {
+  border-color: rgba(251, 113, 133, 0.55);
+}
+
+.fieldLabel {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #b7c7db;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.required {
+  color: #fb7185;
+  font-size: 0.72rem;
+}
+
+.fieldHint {
+  font-size: 0.7rem;
+  color: rgba(183, 199, 219, 0.5);
+}
+
+.fieldError {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: #ff9cad;
+  font-weight: 600;
+}
+
+/* ── Inputs ───────────────────────────────────────────────────────────────── */
+
+.input {
+  width: 100%;
+  padding: 7px 10px;
+  background: rgba(6, 9, 20, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  color: #e5edf8;
+  font-size: 0.875rem;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.input:focus {
+  outline: none;
+  border-color: rgba(121, 215, 255, 0.5);
+}
+
+.input::placeholder {
+  color: rgba(183, 199, 219, 0.3);
+}
+
+.inputMono {
+  font-family: ui-monospace, "Fira Code", monospace;
+  font-size: 0.82rem;
+}
+
+.inputError {
+  border-color: rgba(251, 113, 133, 0.55) !important;
+}
+
+.inputError:focus {
+  border-color: rgba(251, 113, 133, 0.8) !important;
+}
+
+.textarea {
+  width: 100%;
+  padding: 7px 10px;
+  background: rgba(6, 9, 20, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  color: #e5edf8;
+  font-size: 0.82rem;
+  font-family: ui-monospace, "Fira Code", monospace;
+  resize: vertical;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: rgba(121, 215, 255, 0.5);
+}
+
+.textarea::placeholder {
+  color: rgba(183, 199, 219, 0.3);
+}
+
+.select {
+  width: 100%;
+  padding: 7px 10px;
+  background: rgba(6, 9, 20, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  color: #e5edf8;
+  font-size: 0.875rem;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.select:focus {
+  outline: none;
+  border-color: rgba(121, 215, 255, 0.5);
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: #b7c7db;
+  cursor: pointer;
+  padding-top: 2px;
+}
+
+.checkboxLabel input[type="checkbox"] {
+  accent-color: #79d7ff;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+/* ── Tailscale accordion ──────────────────────────────────────────────────── */
+
+.tailscaleToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  background: none;
+  border: none;
+  color: rgba(148, 163, 184, 0.55);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  cursor: pointer;
+  transition: color 0.15s;
+  margin-bottom: 2px;
+}
+
+.tailscaleToggle:hover {
+  color: #b7c7db;
+}
+
+/* ── Bottom action bar ────────────────────────────────────────────────────── */
+
+.bottomActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  margin-bottom: 32px;
+}
+
+/* ── Token form (in API Token section or unauthenticated) ─────────────────── */
+
+.tokenNote {
+  font-size: 0.82rem;
+  color: #b7c7db;
+  margin: 0 0 16px;
+  line-height: 1.6;
+}
+
+.tokenNote code {
+  font-family: ui-monospace, "Fira Code", monospace;
+  color: #79d7ff;
+  background: rgba(121, 215, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.tokenForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 440px;
+}
+
+.testBtn {
+  align-self: flex-start;
+  padding: 7px 16px;
+  background: rgba(121, 215, 255, 0.12);
+  border: 1px solid rgba(121, 215, 255, 0.3);
+  border-radius: 7px;
+  color: #79d7ff;
+  font-size: 0.875rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.testBtn:hover:not(:disabled) {
+  background: rgba(121, 215, 255, 0.22);
+  border-color: rgba(121, 215, 255, 0.5);
+}
+
+.testBtn:disabled {
+  opacity: 0.38;
   cursor: not-allowed;
 }
 
 .successMsg {
-  margin-top: 12px;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: #65f4c9;
+  margin: 4px 0 0;
 }
 
 .errorMsg {
-  margin-top: 12px;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: #ff9cad;
+  margin: 4px 0 0;
 }
 
 .signOutBtn {
-  margin-top: 20px;
-  padding: 6px 12px;
-  background: rgba(148, 163, 184, 0.07);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 8px;
-  font-size: 0.8rem;
-  color: #a9bad1;
+  margin-top: 8px;
+  padding: 5px 12px;
+  background: none;
+  border: 1px solid rgba(251, 113, 133, 0.3);
+  border-radius: 6px;
+  color: #fb7185;
+  font-size: 0.78rem;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s;
 }
 
 .signOutBtn:hover {
-  border-color: rgba(121, 215, 255, 0.4);
-  color: #eef6ff;
+  background: rgba(251, 113, 133, 0.1);
 }

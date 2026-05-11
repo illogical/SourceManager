@@ -20,11 +20,13 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
-describe("Settings component", () => {
-  it("renders a token input and save button", () => {
+// ── Unauthenticated view (no token stored) ────────────────────────────────────
+
+describe("Settings — unauthenticated view", () => {
+  it("renders a token input and save & test button", () => {
     render(<Settings />)
     expect(screen.getByPlaceholderText(/token/i)).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /save/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /save & test/i })).toBeInTheDocument()
   })
 
   it("saves token to localStorage on submit", async () => {
@@ -34,7 +36,7 @@ describe("Settings component", () => {
     fireEvent.change(screen.getByPlaceholderText(/token/i), {
       target: { value: "abc123" },
     })
-    fireEvent.click(screen.getByRole("button", { name: /save/i }))
+    fireEvent.click(screen.getByRole("button", { name: /save & test/i }))
 
     await waitFor(() => expect(client.getToken()).toBe("abc123"))
   })
@@ -46,7 +48,7 @@ describe("Settings component", () => {
     fireEvent.change(screen.getByPlaceholderText(/token/i), {
       target: { value: "abc123" },
     })
-    fireEvent.click(screen.getByRole("button", { name: /save/i }))
+    fireEvent.click(screen.getByRole("button", { name: /save & test/i }))
 
     await screen.findByText(/connected/i)
   })
@@ -58,25 +60,105 @@ describe("Settings component", () => {
     fireEvent.change(screen.getByPlaceholderText(/token/i), {
       target: { value: "bad-token" },
     })
-    fireEvent.click(screen.getByRole("button", { name: /save/i }))
+    fireEvent.click(screen.getByRole("button", { name: /save & test/i }))
 
     await screen.findByText(/invalid/i)
   })
+})
+
+// ── Authenticated view (token stored) ────────────────────────────────────────
+
+describe("Settings — authenticated view", () => {
+  const mockConfig = {
+    config: {
+      server: { port: 17106, frontendPort: 17116, allowedIps: [] },
+      repos: [
+        {
+          id: "my-repo",
+          displayName: "My Repo",
+          repoPath: "/dev/my-repo",
+          defaultBranch: "main",
+          services: [
+            {
+              id: "my-repo-web",
+              displayName: "Web",
+              packageManager: "bun",
+              scriptName: "dev",
+              installCommand: null,
+              port: 3000,
+              healthUrl: "http://localhost:3000/health",
+              healthMode: "ping",
+              tags: [],
+              allowedIps: [],
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  beforeEach(() => {
+    client.setToken("existing-token")
+  })
+
+  it("shows Sign out button when token is set", async () => {
+    vi.spyOn(client, "getEditableConfig").mockResolvedValue(mockConfig)
+    render(<Settings />)
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /sign out/i })).toBeInTheDocument()
+    })
+  })
 
   it("clears token when Sign out is clicked", async () => {
-    client.setToken("existing-token")
-    vi.spyOn(client, "testConnection").mockResolvedValue({ status: "ok" })
+    vi.spyOn(client, "getEditableConfig").mockResolvedValue(mockConfig)
     render(<Settings />)
 
-    // Sign out is only shown when a token is already set
-    const signOut = screen.queryByRole("button", { name: /sign out/i })
-    if (signOut) {
-      fireEvent.click(signOut)
-      expect(client.getToken()).toBeNull()
-    } else {
-      // If no sign-out button, just verify token can be cleared by calling clearToken
-      client.clearToken()
-      expect(client.getToken()).toBeNull()
-    }
+    await waitFor(() => screen.getByRole("button", { name: /sign out/i }))
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }))
+    expect(client.getToken()).toBeNull()
+  })
+
+  it("renders config editor with repo display name after loading", async () => {
+    vi.spyOn(client, "getEditableConfig").mockResolvedValue(mockConfig)
+    render(<Settings />)
+
+    await waitFor(() => {
+      expect(screen.getAllByDisplayValue("My Repo").length).toBeGreaterThan(0)
+    })
+  })
+
+  it("calls applyEditableConfig and invokes onSaved on successful save", async () => {
+    vi.spyOn(client, "getEditableConfig").mockResolvedValue(mockConfig)
+    vi.spyOn(client, "applyEditableConfig").mockResolvedValue({ success: true, changeCount: 0 })
+
+    const onSaved = vi.fn()
+    render(<Settings onSaved={onSaved} />)
+
+    await waitFor(() => screen.getAllByRole("button", { name: /^save$/i }))
+    fireEvent.click(screen.getAllByRole("button", { name: /^save$/i })[0])
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+  })
+
+  it("calls onClose when Cancel is clicked", async () => {
+    vi.spyOn(client, "getEditableConfig").mockResolvedValue(mockConfig)
+
+    const onClose = vi.fn()
+    render(<Settings onClose={onClose} />)
+
+    await waitFor(() => screen.getAllByRole("button", { name: /cancel/i }))
+    fireEvent.click(screen.getAllByRole("button", { name: /cancel/i })[0])
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it("calls onClose when Back to Dashboard is clicked", async () => {
+    vi.spyOn(client, "getEditableConfig").mockResolvedValue(mockConfig)
+
+    const onClose = vi.fn()
+    render(<Settings onClose={onClose} />)
+
+    await waitFor(() => screen.getByRole("button", { name: /dashboard/i }))
+    fireEvent.click(screen.getByRole("button", { name: /dashboard/i }))
+    expect(onClose).toHaveBeenCalled()
   })
 })

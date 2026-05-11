@@ -1,0 +1,69 @@
+.toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 12px 14px;
+  border-radius: 10px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.38);
+  animation: slideDown 0.2s ease;
+  min-width: 260px;
+  max-width: 480px;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.success {
+  background: rgba(17, 34, 24, 0.96);
+  border: 1px solid rgba(45, 212, 145, 0.4);
+  color: #65f4c9;
+}
+
+.error {
+  background: rgba(34, 12, 20, 0.96);
+  border: 1px solid rgba(251, 113, 133, 0.4);
+  color: #ff9cad;
+}
+
+.icon {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.message {
+  flex: 1;
+  min-width: 0;
+}
+
+.dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.65;
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+
+.dismiss:hover {
+  opacity: 1;
+}

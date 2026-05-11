@@ -1,4 +1,4 @@
-import type { ReposResponse, UpdateRequest } from "./types"
+import type { ReposResponse, UpdateRequest, EditableConfig, ConfigValidateResponse, ConfigApplyResponse } from "./types"
 
 const TOKEN_KEY = "sm:token"
 
@@ -96,4 +96,28 @@ export function updateService(
 
 export function testConnection(): Promise<{ status: string }> {
   return apiFetch<{ status: string }>("/health")
+}
+
+// ── Config edit ────────────────────────────────────────────────────────────────
+
+export function getEditableConfig(): Promise<{ config: EditableConfig }> {
+  return apiFetch<{ config: EditableConfig }>("/v1/config")
+}
+
+export function validateEditableConfig(
+  config: EditableConfig,
+): Promise<ConfigValidateResponse> {
+  return apiFetch<ConfigValidateResponse>("/v1/config/validate", {
+    method: "POST",
+    body: JSON.stringify({ config }),
+  })
+}
+
+export function applyEditableConfig(
+  config: EditableConfig,
+): Promise<ConfigApplyResponse> {
+  return apiFetch<ConfigApplyResponse>("/v1/config/apply", {
+    method: "POST",
+    body: JSON.stringify({ config }),
+  })
 }

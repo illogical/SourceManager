@@ -7,7 +7,11 @@ import {
   ApiError,
   listRepos,
   testConnection,
+  getEditableConfig,
+  validateEditableConfig,
+  applyEditableConfig,
 } from "../api/client"
+import type { EditableConfig } from "../api/types"
 
 // ── localStorage stubs ─────────────────────────────────────────────────────
 
@@ -108,5 +112,60 @@ describe("API calls with token", () => {
 
     const [url] = fetch.mock.calls[0] as [string]
     expect(url).toBe("/health")
+  })
+})
+
+// ── Config edit API ────────────────────────────────────────────────────────
+
+describe("Config edit functions", () => {
+  const mockEditableConfig: EditableConfig = {
+    server: { port: 17106, frontendPort: 17116, allowedIps: [] },
+    repos: [],
+  }
+
+  beforeEach(() => setToken("test-token"))
+
+  it("getEditableConfig calls GET /v1/config", async () => {
+    const fetch = mockFetch(200, { config: mockEditableConfig })
+    vi.stubGlobal("fetch", fetch)
+
+    const result = await getEditableConfig()
+    const [url] = fetch.mock.calls[0] as [string]
+    expect(url).toBe("/v1/config")
+    expect(result.config.server.port).toBe(17106)
+  })
+
+  it("validateEditableConfig calls POST /v1/config/validate", async () => {
+    const mockResponse = {
+      validation: { valid: true, errors: [], warnings: [] },
+      diff: { changes: [], changeCount: 0 },
+    }
+    const fetch = mockFetch(200, mockResponse)
+    vi.stubGlobal("fetch", fetch)
+
+    const result = await validateEditableConfig(mockEditableConfig)
+    const [url, init] = fetch.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("/v1/config/validate")
+    expect(init.method).toBe("POST")
+    expect(result.validation.valid).toBe(true)
+  })
+
+  it("applyEditableConfig calls POST /v1/config/apply", async () => {
+    const fetch = mockFetch(200, { success: true, changeCount: 2 })
+    vi.stubGlobal("fetch", fetch)
+
+    const result = await applyEditableConfig(mockEditableConfig)
+    const [url, init] = fetch.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("/v1/config/apply")
+    expect(init.method).toBe("POST")
+    expect(result.success).toBe(true)
+    expect(result.changeCount).toBe(2)
+  })
+
+  it("applyEditableConfig throws ApiError on 422", async () => {
+    vi.stubGlobal("fetch", mockFetch(422, { error: "Validation failed", validation: { errors: [] } }))
+    const err = await applyEditableConfig(mockEditableConfig).catch((e) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(422)
   })
 })

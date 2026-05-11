@@ -214,6 +214,9 @@ Requests without a valid token receive `401 Unauthorized`.
 | POST | `/v1/repos/:repoId/services/:serviceId/stop` | Yes | Stop the service (idempotent) |
 | POST | `/v1/repos/:repoId/services/:serviceId/restart` | Yes | Restart the service |
 | POST | `/v1/repos/:repoId/services/:serviceId/update` | Yes | Git pull/branch switch + install/restart |
+| GET | `/v1/config` | Yes | Read editable config snapshot (excludes token) |
+| POST | `/v1/config/validate` | Yes | Validate proposed config; returns errors + diff |
+| POST | `/v1/config/apply` | Yes | Atomically write validated config to disk |
 
 ### POST /v1/repos/:repoId/services/:serviceId/update
 
@@ -239,6 +242,30 @@ All fields are optional. Defaults: branch from repo config, `installMode=auto`, 
 | | `always` | Always restart after update |
 | | `never` | Never restart (health check still runs) |
 | `dryRun` | `true` | Runs precheck only; skips all mutations |
+
+---
+
+### Config Editing
+
+The Settings page (gear icon) provides a full GUI for editing `data/projects.json`. The config is also editable via API:
+
+**GET `/v1/config`** — returns an editable snapshot (no `token` field).
+
+**POST `/v1/config/validate`** — validates proposed edits without writing:
+```json
+{ "config": { "server": { "port": 17106, ... }, "repos": [ ... ] } }
+```
+Returns `{ "validation": { "valid": true, "errors": [], "warnings": [] }, "diff": { "changeCount": 2, "changes": [...] } }`.
+
+**POST `/v1/config/apply`** — validates and atomically writes (temp file + rename).  
+Returns `{ "success": true, "changeCount": 2 }` or `422` with validation errors.
+
+**Security guarantees:**
+- `server.token` is never sent to the client and is always preserved from disk.
+- `repo.id` and `service.id` are immutable — proposed IDs are ignored; original disk IDs are kept.
+- Shell metacharacters (`;`, `&`, `|`, etc.) are rejected in `installCommand`.
+
+**After saving**, a restart is required if `server.port` or `server.frontendPort` changed.
 
 ---
 

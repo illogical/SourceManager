@@ -4,7 +4,7 @@ import { readFileSync } from "fs"
 import type { AppConfig, RepoConfig, ServiceConfig } from "./types"
 
 const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
-const CONFIG_PATH = join(_dir, "..", "data", "projects.json")
+export const CONFIG_PATH = join(_dir, "..", "data", "projects.json")
 const EXAMPLE_PATH = "data/projects.example.json"
 
 let cachedConfig: AppConfig | null = null
@@ -195,6 +195,10 @@ function validateService(svc: ServiceConfig, repoId: string, serviceIds: Set<str
 
 export function getConfig(): AppConfig {
   return loadConfig()
+}
+
+export function invalidateCache(): void {
+  cachedConfig = null
 }
 
 export function getRepo(id: string): RepoConfig | undefined {

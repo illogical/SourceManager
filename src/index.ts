@@ -6,6 +6,7 @@ import { requestLoggerMiddleware } from "./middleware/requestLogger"
 import { healthRoute } from "./routes/health"
 import { reposRoute } from "./routes/repos"
 import { updateRoute } from "./routes/update"
+import { configRoute } from "./routes/config"
 import { processManager } from "./services/processManager"
 import { rotateOldLogs } from "./services/runLogger"
 import { RepoNotFoundError, ServiceNotFoundError } from "./config"
@@ -92,6 +93,7 @@ const app = new Elysia()
       })
       .use(reposRoute)
       .use(updateRoute)
+      .use(configRoute)
   )
 
   // Error handling
