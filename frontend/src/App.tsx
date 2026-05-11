@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Settings as SettingsIcon } from "lucide-react"
 import { getToken } from "./api/client"
 import Settings from "./components/Settings"
 import RepoList from "./components/RepoList"
@@ -23,7 +24,7 @@ export default function App() {
           aria-label="Settings"
           title="Settings"
         >
-          ⚙
+          <SettingsIcon aria-hidden="true" size={18} strokeWidth={2.2} />
         </button>
       </header>
 

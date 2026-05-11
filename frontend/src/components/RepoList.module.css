@@ -1,50 +1,260 @@
-.list {
+.dashboard {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 22px;
+}
+
+.overview {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(167, 139, 250, 0.08) 54%, rgba(45, 212, 191, 0.08)),
+    rgba(10, 16, 31, 0.72);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.24);
+}
+
+.kicker,
+.repoEyebrow {
+  margin: 0 0 6px;
+  color: #79d7ff;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  color: #f3f8ff;
+  font-size: 1.65rem;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.metrics {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.metric {
+  min-width: 116px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "icon value"
+    "icon label";
+  column-gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background: rgba(6, 10, 20, 0.46);
+  color: #aabbd0;
+}
+
+.metric svg {
+  grid-area: icon;
+  color: #89a8d1;
+}
+
+.metricValue {
+  grid-area: value;
+  color: #f4f8ff;
+  font-size: 1.2rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.metricLabel {
+  grid-area: label;
+  color: #8da1bb;
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.metric[data-state="running"] svg,
+.metric[data-state="running"] .metricValue {
+  color: #65f4c9;
+}
+
+.metric[data-state="attention"] svg,
+.metric[data-state="attention"] .metricValue {
+  color: #ffd166;
+}
+
+.refreshBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  min-height: 42px;
+  border: 1px solid rgba(121, 215, 255, 0.24);
+  border-radius: 8px;
+  color: #a8e6ff;
+  background: rgba(121, 215, 255, 0.08);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+
+.refreshBtn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: rgba(121, 215, 255, 0.15);
+  border-color: rgba(121, 215, 255, 0.5);
+}
+
+.refreshBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.spinning {
+  animation: spin 0.85s linear infinite;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
+  gap: 18px;
 }
 
 .repoGroup {
+  --group-accent: #60a5fa;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-top-color: color-mix(in srgb, var(--group-accent) 52%, rgba(148, 163, 184, 0.13));
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--group-accent) 10%, transparent), transparent 130px),
+    rgba(9, 14, 27, 0.72);
+}
+
+.repoHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.repoEyebrow {
+  color: color-mix(in srgb, var(--group-accent) 72%, #ffffff);
 }
 
 .repoName {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-  color: #111827;
-  padding-bottom: 6px;
-  border-bottom: 2px solid #e5e7eb;
+  color: #f2f7ff;
+  font-size: 1.05rem;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.repoCounts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.stateCount {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 4px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 7px;
+  color: #c8d6e8;
+  background: rgba(148, 163, 184, 0.07);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.stateCount span {
+  color: #8ea1ba;
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stateCount[data-state="running"] {
+  color: #65f4c9;
+}
+
+.stateCount[data-state="starting"] {
+  color: #ffd166;
+}
+
+.stateCount[data-state="failed"] {
+  color: #ff7a90;
+}
+
+.stateCount[data-state="stopped"] {
+  color: #90a4c2;
 }
 
 .services {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-left: 4px;
+  gap: 9px;
 }
 
 .loading {
-  color: #6b7280;
-  font-size: 0.9rem;
-  padding: 32px 0;
+  color: #9eb0c8;
+  font-size: 0.92rem;
+  font-weight: 700;
+  padding: 42px 0;
   text-align: center;
 }
 
 .empty {
-  color: #6b7280;
-  font-size: 0.9rem;
-  padding: 32px 0;
+  color: #9eb0c8;
+  font-size: 0.92rem;
+  padding: 42px 0;
   text-align: center;
 }
 
 .errorBanner {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.26);
   border-radius: 8px;
-  color: #dc2626;
-  padding: 12px 16px;
+  color: #ffd1d8;
+  padding: 14px 16px;
   font-size: 0.9rem;
+  font-weight: 700;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 860px) {
+  .overview {
+    flex-direction: column;
+  }
+
+  .metrics {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .repoHeader {
+    flex-direction: column;
+  }
+
+  .repoCounts {
+    justify-content: flex-start;
+  }
 }

@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { ExternalLink, Play, RefreshCw, RotateCcw, Square, Terminal, Wifi } from "lucide-react"
 import type { ServiceSummary } from "../api/types"
 import LifecycleBadge from "./LifecycleBadge"
 import ActionButton from "./ActionButton"
@@ -20,6 +21,7 @@ export default function ServiceCard({ repoId, service, onStart, onStop, onRestar
   const { lifecycle, tailnet } = service
   const state = lifecycle.state
   const isPending = pendingAction !== null
+  const isRunning = state === "running" || state === "starting"
 
   const tailnetUrl =
     tailnet?.hostname && tailnet?.domain
@@ -42,59 +44,94 @@ export default function ServiceCard({ repoId, service, onStart, onStop, onRestar
     lifecycle.state === "running" && lifecycle.uptimeMs != null
       ? formatUptime(lifecycle.uptimeMs)
       : null
+  const toggleLabel = isRunning ? "Stop service" : "Start service"
+  const toggleIcon = isRunning ? Square : Play
+  const toggleVariant = isRunning ? "stop" : "start"
+  const canRestart = state === "running"
+  const canUpdate = state !== "starting"
+
+  async function handleToggle() {
+    if (isRunning) {
+      await run("stop", () => onStop(repoId, service.id))
+    } else {
+      await run("start", () => onStart(repoId, service.id))
+    }
+  }
 
   return (
-    <div className={styles.card}>
-      <div className={styles.header}>
-        <div className={styles.titleRow}>
-          <span className={styles.name}>{service.displayName}</span>
-          <span className={styles.port}>:{service.port}</span>
-        </div>
-        <div className={styles.metaRow}>
-          <LifecycleBadge state={state} />
-          {lifecycle.pid && <span className={styles.pid}>PID {lifecycle.pid}</span>}
-          {uptimeSummary && <span className={styles.uptime}>{uptimeSummary}</span>}
-        </div>
-        {tailnetUrl && (
-          <div className={styles.tailnet}>
-            Tailnet: <span className={styles.tailnetUrl}>{tailnetUrl}</span>
+    <article className={styles.card} data-state={state}>
+      <div className={styles.statusRail} aria-hidden="true" />
+
+      <div className={styles.identity}>
+        <div className={styles.titleBlock}>
+          <div className={styles.titleRow}>
+            <span className={styles.name}>{service.displayName}</span>
+            <span className={styles.port}>:{service.port}</span>
           </div>
-        )}
-        {state === "failed" && lifecycle.lastError && (
-          <div className={styles.errorMsg}>{lifecycle.lastError}</div>
-        )}
-        {actionError && <div className={styles.actionError}>{actionError}</div>}
+          <div className={styles.metaRow}>
+            <LifecycleBadge state={state} />
+            {uptimeSummary && <span className={styles.uptime}>{uptimeSummary}</span>}
+            {lifecycle.pid && <span className={styles.pid}>PID {lifecycle.pid}</span>}
+          </div>
+        </div>
+
+        <div className={styles.stackInfo}>
+          <span className={styles.infoPill}>
+            <Terminal aria-hidden="true" size={13} strokeWidth={2.2} />
+            {service.packageManager} {service.scriptName}
+          </span>
+          {service.tags.map((tag) => (
+            <span key={tag} className={styles.tag}>
+              {tag}
+            </span>
+          ))}
+        </div>
       </div>
 
       <div className={styles.controls}>
         <ActionButton
-          label="Start"
-          variant="primary"
-          disabled={isPending || state === "running" || state === "starting"}
-          loading={pendingAction === "start"}
-          onClick={() => run("start", () => onStart(repoId, service.id))}
+          label={toggleLabel}
+          icon={toggleIcon}
+          variant={toggleVariant}
+          disabled={isPending}
+          loading={pendingAction === "start" || pendingAction === "stop"}
+          onClick={handleToggle}
         />
         <ActionButton
-          label="Stop"
-          variant="danger"
-          disabled={isPending || state === "stopped" || state === "failed"}
-          loading={pendingAction === "stop"}
-          onClick={() => run("stop", () => onStop(repoId, service.id))}
-        />
-        <ActionButton
-          label="Restart"
-          disabled={isPending || state === "stopped" || state === "failed" || state === "starting"}
+          label="Restart service"
+          icon={RotateCcw}
+          disabled={isPending || !canRestart}
           loading={pendingAction === "restart"}
           onClick={() => run("restart", () => onRestart(repoId, service.id))}
         />
         <ActionButton
-          label="Update"
-          disabled={isPending || state === "starting"}
+          label="Update service"
+          icon={RefreshCw}
+          disabled={isPending || !canUpdate}
           loading={pendingAction === "update"}
           onClick={() => run("update", () => onUpdate(repoId, service.id))}
         />
       </div>
-    </div>
+
+      {tailnetUrl && (
+        <a
+          className={styles.tailnet}
+          href={`https://${tailnetUrl}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <Wifi aria-hidden="true" size={13} strokeWidth={2.2} />
+          <span>{tailnetUrl}</span>
+          <ExternalLink aria-hidden="true" size={12} strokeWidth={2.2} />
+        </a>
+      )}
+
+      {(state === "failed" && lifecycle.lastError) || actionError ? (
+        <div className={styles.message} role="alert">
+          {actionError ?? lifecycle.lastError}
+        </div>
+      ) : null}
+    </article>
   )
 }
 

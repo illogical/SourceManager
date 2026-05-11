@@ -82,7 +82,7 @@ describe("ServiceCard", () => {
     expect(screen.getByText(/myapi\.example\.ts\.net/)).toBeInTheDocument()
   })
 
-  it("Start is disabled when state is running", () => {
+  it("shows a stop toggle when state is running", () => {
     render(
       <ServiceCard
         repoId="my-repo"
@@ -93,10 +93,10 @@ describe("ServiceCard", () => {
         onUpdate={vi.fn()}
       />
     )
-    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Stop service" })).not.toBeDisabled()
   })
 
-  it("Stop is disabled when state is stopped", () => {
+  it("shows a start toggle when state is stopped", () => {
     render(
       <ServiceCard
         repoId="my-repo"
@@ -107,10 +107,10 @@ describe("ServiceCard", () => {
         onUpdate={vi.fn()}
       />
     )
-    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Start service" })).not.toBeDisabled()
   })
 
-  it("clicking Start calls onStart with repoId and serviceId", async () => {
+  it("clicking the start toggle calls onStart with repoId and serviceId", async () => {
     const onStart = vi.fn().mockResolvedValue(undefined)
     render(
       <ServiceCard
@@ -123,9 +123,27 @@ describe("ServiceCard", () => {
       />
     )
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Start" }))
+      fireEvent.click(screen.getByRole("button", { name: "Start service" }))
     })
     expect(onStart).toHaveBeenCalledWith("my-repo", "my-api")
+  })
+
+  it("clicking the stop toggle calls onStop with repoId and serviceId", async () => {
+    const onStop = vi.fn().mockResolvedValue(undefined)
+    render(
+      <ServiceCard
+        repoId="my-repo"
+        service={makeService({ lifecycle: { ...makeService().lifecycle, state: "running" } })}
+        onStart={vi.fn()}
+        onStop={onStop}
+        onRestart={vi.fn()}
+        onUpdate={vi.fn()}
+      />
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Stop service" }))
+    })
+    expect(onStop).toHaveBeenCalledWith("my-repo", "my-api")
   })
 
   it("all buttons are disabled while an action is pending", async () => {
@@ -143,7 +161,7 @@ describe("ServiceCard", () => {
       />
     )
 
-    fireEvent.click(screen.getByRole("button", { name: "Start" }))
+    fireEvent.click(screen.getByRole("button", { name: "Start service" }))
 
     // During pending, all buttons should be disabled
     await waitFor(() => {

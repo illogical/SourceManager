@@ -1,0 +1,138 @@
+{
+  "server": {
+    "port": 17106,
+    "frontendPort": 17116,
+    "token": "replace-with-a-strong-secret-token",
+    "allowedIps": []
+  },
+  "repos": [
+    {
+      "id": "sourcemanager",
+      "displayName": "SourceManager",
+      "repoPath": "C:\\LocalDev\\Projects\\SourceManager",
+      "defaultBranch": "main",
+      "services": [
+        {
+          "id": "sourcemanager-api",
+          "displayName": "SourceManager API",
+          "packageManager": "bun",
+          "scriptName": "dev:backend",
+          "port": 17106,
+          "healthUrl": "http://localhost:17106/health",
+          "healthMode": "full",
+          "tags": ["api", "backend"],
+          "allowedIps": []
+        },
+        {
+          "id": "sourcemanager-frontend",
+          "displayName": "SourceManager Frontend",
+          "packageManager": "bun",
+          "scriptName": "dev:frontend",
+          "port": 17116,
+          "healthUrl": "http://localhost:17116/",
+          "healthMode": "ping",
+          "tags": ["frontend", "vite"],
+          "allowedIps": []
+        }
+      ]
+    },
+    {
+      "id": "devplanner",
+      "displayName": "DevPlanner",
+      "repoPath": "C:\\LocalDev\\Projects\\DevPlanner",
+      "defaultBranch": "main",
+      "services": [
+        {
+          "id": "devplanner-api",
+          "displayName": "DevPlanner API",
+          "packageManager": "bun",
+          "scriptName": "dev:backend",
+          "port": 17103,
+          "healthUrl": "http://localhost:17103/health",
+          "healthMode": "ping",
+          "tags": ["api", "backend"],
+          "allowedIps": []
+        },
+        {
+          "id": "devplanner-web",
+          "displayName": "DevPlanner Frontend",
+          "packageManager": "bun",
+          "scriptName": "dev:frontend",
+          "port": 5173,
+          "healthUrl": "http://localhost:17103/health",
+          "healthMode": "ping",
+          "tags": ["frontend", "vite"],
+          "allowedIps": []
+        }
+      ]
+    },
+    {
+      "id": "lmapi",
+      "displayName": "LMApi",
+      "repoPath": "C:\\LocalDev\\Projects\\LMApi",
+      "defaultBranch": "main",
+      "services": [
+        {
+          "id": "lmapi-api",
+          "displayName": "LMApi API and Dashboard",
+          "packageManager": "npm",
+          "scriptName": "dev",
+          "port": 3111,
+          "healthUrl": "http://localhost:3111/health",
+          "healthMode": "ping",
+          "tags": ["api", "frontend", "dashboard"],
+          "allowedIps": []
+        }
+      ]
+    },
+    {
+      "id": "memoryapi",
+      "displayName": "MemoryApi",
+      "repoPath": "C:\\LocalDev\\Projects\\MemoryApi",
+      "defaultBranch": "main",
+      "services": [
+        {
+          "id": "memoryapi",
+          "displayName": "MemoryApi API and Review UI",
+          "packageManager": "npm",
+          "scriptName": "dev",
+          "port": 17107,
+          "healthUrl": "http://localhost:17107/",
+          "healthMode": "ping",
+          "tags": ["api", "backend", "frontend"],
+          "allowedIps": []
+        }
+      ]
+    },
+    {
+      "id": "lmeval",
+      "displayName": "LMEval",
+      "repoPath": "C:\\LocalDev\\Projects\\LMEval",
+      "defaultBranch": "main",
+      "services": [
+        {
+          "id": "lmeval-api",
+          "displayName": "LMEval API",
+          "packageManager": "npm",
+          "scriptName": "dev:server",
+          "port": 3200,
+          "healthUrl": "http://localhost:3200/api/eval/templates",
+          "healthMode": "ping",
+          "tags": ["api", "backend"],
+          "allowedIps": []
+        },
+        {
+          "id": "lmeval-frontend",
+          "displayName": "LMEval Frontend",
+          "packageManager": "npm",
+          "scriptName": "dev:client",
+          "port": 5177,
+          "healthUrl": "http://localhost:5177/",
+          "healthMode": "ping",
+          "tags": ["frontend", "vite"],
+          "allowedIps": []
+        }
+      ]
+    }
+  ]
+}

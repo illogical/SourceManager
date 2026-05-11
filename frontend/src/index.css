@@ -5,7 +5,12 @@
 body {
   margin: 0;
   padding: 0;
-  background: #f9fafb;
-  color: #111827;
+  background: #060914;
+  color: #e5edf8;
   -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
 }
