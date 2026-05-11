@@ -52,9 +52,20 @@ vi.mock("../../../src/services/processManager", () => ({
   },
 }))
 
+vi.mock("../../../src/services/healthCheck", () => ({
+  checkHealth: vi.fn(async () => ({ status: "fail" as const, durationMs: 5 })),
+}))
+
 vi.mock("../../../src/services/runLogger", () => ({
   readRecentLogs: vi.fn(async () => []),
 }))
+
+beforeEach(async () => {
+  const { processManager } = await import("../../../src/services/processManager")
+  const { checkHealth } = await import("../../../src/services/healthCheck")
+  vi.mocked(processManager.getProcess).mockReturnValue(null)
+  vi.mocked(checkHealth).mockResolvedValue({ status: "fail", durationMs: 5 })
+})
 
 // ── App builder ───────────────────────────────────────────────────────────────
 
@@ -102,6 +113,21 @@ describe("GET /v1/repos", () => {
     expect(body.repos[0].id).toBe("my-repo")
     expect(Array.isArray(body.repos[0].services)).toBe(true)
   })
+
+  it("includes full service metadata needed by the dashboard", async () => {
+    const app = await buildApp()
+    const res = await app.handle(req("/repos"))
+    const body = (await res.json()) as {
+      repos: Array<{ services: Array<{ packageManager: string; scriptName: string; healthUrl: string; healthMode: string; allowedIps: string[] }> }>
+    }
+    expect(body.repos[0].services[0]).toMatchObject({
+      packageManager: "bun",
+      scriptName: "dev",
+      healthUrl: "http://localhost:3000/health",
+      healthMode: "ping",
+      allowedIps: [],
+    })
+  })
 })
 
 describe("GET /v1/repos/:repoId", () => {
@@ -129,6 +155,19 @@ describe("GET /v1/repos/:repoId/services/:serviceId", () => {
     expect(body.id).toBe("my-repo-web")
     expect(body.lifecycle).toBeDefined()
     expect(body.lifecycle.state).toBe("stopped")
+  })
+
+  it("reports an untracked service as running when its health check passes", async () => {
+    const { checkHealth } = await import("../../../src/services/healthCheck")
+    vi.mocked(checkHealth).mockResolvedValue({ status: "pass", durationMs: 6 })
+
+    const app = await buildApp()
+    const res = await app.handle(req("/repos/my-repo/services/my-repo-web"))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { lifecycle: { state: string; pid: number | null; command: string | null } }
+    expect(body.lifecycle.state).toBe("running")
+    expect(body.lifecycle.pid).toBeNull()
+    expect(body.lifecycle.command).toBeNull()
   })
 
   it("returns 404 for unknown serviceId", async () => {

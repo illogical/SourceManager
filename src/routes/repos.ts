@@ -1,12 +1,33 @@
 import Elysia, { t } from "elysia"
-import { getAllServices, getConfig, requireRepo, requireService } from "../config"
+import { getConfig, requireRepo, requireService } from "../config"
 import { processManager } from "../services/processManager"
+import { checkHealth } from "../services/healthCheck"
 import { readRecentLogs } from "../services/runLogger"
+import type { LifecycleState, ServiceConfig } from "../types"
 
-function buildLifecycle(serviceId: string) {
-  const state = processManager.getProcess(serviceId)
+interface ServiceLifecycle {
+  state: LifecycleState
+  pid: number | null
+  startedAt: string | null
+  readySince: string | null
+  uptimeMs: number | null
+  command: string | null
+  lastError: string | null
+}
+
+async function buildLifecycle(service: ServiceConfig): Promise<ServiceLifecycle> {
+  const state = processManager.getProcess(service.id)
   if (!state) {
-    return { state: "stopped", pid: null, startedAt: null, readySince: null, uptimeMs: null, command: null, lastError: null }
+    const health = await checkHealth(service)
+    return {
+      state: health.status === "pass" ? "running" : "stopped",
+      pid: null,
+      startedAt: null,
+      readySince: health.status === "pass" ? new Date().toISOString() : null,
+      uptimeMs: null,
+      command: null,
+      lastError: null,
+    }
   }
   const uptimeMs = state.lifecycleState === "running" && state.readySince
     ? Date.now() - new Date(state.readySince).getTime()
@@ -22,7 +43,23 @@ function buildLifecycle(serviceId: string) {
   }
 }
 
-function buildTailnet(service: import("../types").ServiceConfig) {
+function buildServiceSummary(service: ServiceConfig, lifecycle: ServiceLifecycle) {
+  return {
+    id: service.id,
+    displayName: service.displayName,
+    packageManager: service.packageManager,
+    scriptName: service.scriptName,
+    port: service.port,
+    healthUrl: service.healthUrl,
+    healthMode: service.healthMode,
+    tags: service.tags,
+    allowedIps: service.allowedIps,
+    lifecycle,
+    tailnet: buildTailnet(service),
+  }
+}
+
+function buildTailnet(service: ServiceConfig) {
   if (!service.tailnetHostname) return null
   return {
     hostname: service.tailnetHostname,
@@ -39,20 +76,15 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
     "/",
     async () => {
       const config = getConfig()
-      const repos = config.repos.map((repo) => ({
+      const repos = await Promise.all(config.repos.map(async (repo) => ({
         id: repo.id,
         displayName: repo.displayName,
         repoPath: repo.repoPath,
         defaultBranch: repo.defaultBranch,
-        services: repo.services.map((service) => ({
-          id: service.id,
-          displayName: service.displayName,
-          port: service.port,
-          tags: service.tags,
-          lifecycle: buildLifecycle(service.id),
-          tailnet: buildTailnet(service),
-        })),
-      }))
+        services: await Promise.all(repo.services.map(async (service) => (
+          buildServiceSummary(service, await buildLifecycle(service))
+        ))),
+      })))
       return { repos }
     },
     { detail: { summary: "List all repos and services", tags: ["Repos"] } }
@@ -61,26 +93,16 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
   // GET /repos/:repoId
   .get(
     "/:repoId",
-    ({ params }) => {
+    async ({ params }) => {
       const repo = requireRepo(params.repoId)
       return {
         id: repo.id,
         displayName: repo.displayName,
         repoPath: repo.repoPath,
         defaultBranch: repo.defaultBranch,
-        services: repo.services.map((service) => ({
-          id: service.id,
-          displayName: service.displayName,
-          packageManager: service.packageManager,
-          scriptName: service.scriptName,
-          port: service.port,
-          healthUrl: service.healthUrl,
-          healthMode: service.healthMode,
-          tags: service.tags,
-          allowedIps: service.allowedIps,
-          lifecycle: buildLifecycle(service.id),
-          tailnet: buildTailnet(service),
-        })),
+        services: await Promise.all(repo.services.map(async (service) => (
+          buildServiceSummary(service, await buildLifecycle(service))
+        ))),
       }
     },
     {
@@ -92,26 +114,14 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
   // GET /repos/:repoId/services/:serviceId
   .get(
     "/:repoId/services/:serviceId",
-    ({ params }) => {
+    async ({ params }) => {
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
       // Also validate serviceId belongs to this repo
       if (service.id !== params.serviceId || !repo.services.some((s) => s.id === params.serviceId)) {
         throw new Error(`Service "${params.serviceId}" not found in repo "${params.repoId}"`)
       }
-      return {
-        id: service.id,
-        displayName: service.displayName,
-        packageManager: service.packageManager,
-        scriptName: service.scriptName,
-        port: service.port,
-        healthUrl: service.healthUrl,
-        healthMode: service.healthMode,
-        tags: service.tags,
-        allowedIps: service.allowedIps,
-        lifecycle: buildLifecycle(service.id),
-        tailnet: buildTailnet(service),
-      }
+      return buildServiceSummary(service, await buildLifecycle(service))
     },
     {
       params: t.Object({ repoId: t.String(), serviceId: t.String() }),
@@ -149,7 +159,7 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
         success: result.success,
         message: result.message,
         portKillResult: result.portKillResult ?? null,
-        lifecycle: buildLifecycle(service.id),
+        lifecycle: await buildLifecycle(service),
       }
     },
     {
@@ -191,7 +201,7 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
         success: result.success,
         message: result.message,
         portKillResult: result.portKillResult ?? null,
-        lifecycle: buildLifecycle(service.id),
+        lifecycle: await buildLifecycle(service),
       }
     },
     {
