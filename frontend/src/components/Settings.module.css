@@ -547,3 +547,48 @@
 .signOutBtn:hover {
   background: rgba(251, 113, 133, 0.1);
 }
+
+/* ── Add / Remove structural buttons ─────────────────────────────────────── */
+
+.addBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  margin: 12px 0 4px;
+  background: rgba(45, 212, 191, 0.08);
+  border: 1px dashed rgba(45, 212, 191, 0.35);
+  border-radius: 7px;
+  color: #2dd4bf;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.addBtn:hover {
+  background: rgba(45, 212, 191, 0.14);
+  border-color: rgba(45, 212, 191, 0.55);
+}
+
+.removeBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid rgba(251, 113, 133, 0.25);
+  border-radius: 6px;
+  color: rgba(251, 113, 133, 0.7);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.removeBtn:hover {
+  background: rgba(251, 113, 133, 0.1);
+  color: #fb7185;
+  border-color: rgba(251, 113, 133, 0.45);
+}

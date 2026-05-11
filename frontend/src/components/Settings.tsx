@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { ArrowLeft, ChevronDown, ChevronRight, AlertCircle } from "lucide-react"
+import { ArrowLeft, ChevronDown, ChevronRight, AlertCircle, Plus, Trash2 } from "lucide-react"
 import * as client from "../api/client"
 import type { EditableConfig, EditableServiceConfig, ValidationFieldError } from "../api/types"
 import styles from "./Settings.module.css"
@@ -11,6 +11,7 @@ const SCRIPT_RE = /^[a-zA-Z0-9:_-]+$/
 const CIDR_RE = /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/
 const SHELL_META_RE = /[;&|><`$(){}\\\n]/
 const SUBDOMAIN_RE = /^[a-z0-9-]+$/
+const SLUG_RE = /^[a-z0-9-]+$/
 
 function isValidUrl(s: string): boolean {
   try {
@@ -25,7 +26,7 @@ function isValidCidr(s: string): boolean {
   return CIDR_RE.test(s)
 }
 
-function validateDraft(draft: EditableConfig): Record<string, string> {
+function validateDraft(draft: EditableConfig, newIds: Set<string>): Record<string, string> {
   const errors: Record<string, string> = {}
 
   if (!Number.isInteger(draft.server.port) || draft.server.port < 1 || draft.server.port > 65535) {
@@ -41,9 +42,19 @@ function validateDraft(draft: EditableConfig): Record<string, string> {
     }
   }
 
+  const seenRepoIds = new Set<string>()
   for (let i = 0; i < draft.repos.length; i++) {
     const repo = draft.repos[i]
     const rp = `repos[${i}]`
+
+    if (newIds.has(repo.id)) {
+      if (!repo.id.trim() || !SLUG_RE.test(repo.id)) {
+        errors[`${rp}.id`] = "Lowercase letters, digits, and hyphens only"
+      } else if (seenRepoIds.has(repo.id)) {
+        errors[`${rp}.id`] = "ID must be unique"
+      }
+    }
+    seenRepoIds.add(repo.id)
 
     if (!repo.displayName.trim()) errors[`${rp}.displayName`] = "Required"
     if (!repo.repoPath.trim()) errors[`${rp}.repoPath`] = "Required"
@@ -53,9 +64,19 @@ function validateDraft(draft: EditableConfig): Record<string, string> {
       errors[`${rp}.defaultBranch`] = "Letters, digits, dots, hyphens, or slashes only"
     }
 
+    const seenSvcIds = new Set<string>()
     for (let j = 0; j < repo.services.length; j++) {
       const svc = repo.services[j]
       const sp = `${rp}.services[${j}]`
+
+      if (newIds.has(svc.id)) {
+        if (!svc.id.trim() || !SLUG_RE.test(svc.id)) {
+          errors[`${sp}.id`] = "Lowercase letters, digits, and hyphens only"
+        } else if (seenSvcIds.has(svc.id)) {
+          errors[`${sp}.id`] = "ID must be unique within repo"
+        }
+      }
+      seenSvcIds.add(svc.id)
 
       if (!svc.displayName.trim()) errors[`${sp}.displayName`] = "Required"
       if (!Number.isInteger(svc.port) || svc.port < 1 || svc.port > 65535) {
@@ -122,6 +143,14 @@ function joinLines(arr: string[]): string {
   return arr.join(", ")
 }
 
+/** Generate a unique ID that doesn't collide with the provided set */
+function uniqueId(base: string, taken: Set<string>): string {
+  if (!taken.has(base)) return base
+  let n = 2
+  while (taken.has(`${base}-${n}`)) n++
+  return `${base}-${n}`
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Settings({ onConnected, onClose, onSaved, onSaveError }: Props) {
@@ -139,6 +168,8 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
   const [serverErrors, setServerErrors] = useState<ValidationFieldError[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [expandedTailscale, setExpandedTailscale] = useState<Set<string>>(new Set())
+  // Tracks IDs that were created in this session (so their ID field renders as editable)
+  const [newIds, setNewIds] = useState<Set<string>>(new Set())
 
   // Load config on mount (only if authenticated)
   useEffect(() => {
@@ -160,11 +191,11 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
     return () => { cancelled = true }
   }, [hasToken])
 
-  // Re-validate whenever draft changes
+  // Re-validate whenever draft or newIds changes
   useEffect(() => {
     if (!draft) return
-    setFieldErrors(validateDraft(draft))
-  }, [draft])
+    setFieldErrors(validateDraft(draft, newIds))
+  }, [draft, newIds])
 
   // ── Token form ─────────────────────────────────────────────────────────────
 
@@ -202,7 +233,7 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
 
   async function handleSave() {
     if (!draft) return
-    const localErrors = validateDraft(draft)
+    const localErrors = validateDraft(draft, newIds)
     if (Object.keys(localErrors).length > 0) {
       setFieldErrors(localErrors)
       document.querySelector<HTMLElement>("[data-field]")?.scrollIntoView({ behavior: "smooth", block: "center" })
@@ -279,6 +310,117 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
       if (next.has(svcId)) next.delete(svcId)
       else next.add(svcId)
       return next
+    })
+  }
+
+  // ── Structural add/remove ──────────────────────────────────────────────────
+
+  function addRepo() {
+    const id = uniqueId("new-repo", new Set(draft?.repos.map((r) => r.id) ?? []))
+    setNewIds((prev) => new Set(prev).add(id))
+    setDraft((d) => {
+      if (!d) return d
+      return {
+        ...d,
+        repos: [
+          ...d.repos,
+          {
+            id,
+            displayName: "",
+            repoPath: "",
+            defaultBranch: "main",
+            services: [],
+          },
+        ],
+      }
+    })
+  }
+
+  function removeRepo(i: number) {
+    setDraft((d) => {
+      if (!d) return d
+      const repos = d.repos.filter((_, idx) => idx !== i)
+      return { ...d, repos }
+    })
+  }
+
+  function addService(repoIndex: number) {
+    const existingIds = new Set(draft?.repos.flatMap((r) => r.services.map((s) => s.id)) ?? [])
+    const id = uniqueId("new-service", existingIds)
+    setNewIds((prev) => new Set(prev).add(id))
+    setDraft((d) => {
+      if (!d) return d
+      const repos = [...d.repos]
+      repos[repoIndex] = {
+        ...repos[repoIndex],
+        services: [
+          ...repos[repoIndex].services,
+          {
+            id,
+            displayName: "",
+            packageManager: "auto" as const,
+            scriptName: "dev",
+            installCommand: null,
+            port: 3000,
+            healthUrl: "http://localhost:3000/health",
+            healthMode: "ping" as const,
+            tags: [],
+            allowedIps: [],
+          },
+        ],
+      }
+      return { ...d, repos }
+    })
+  }
+
+  function removeService(repoIndex: number, svcIndex: number) {
+    setDraft((d) => {
+      if (!d) return d
+      const repos = [...d.repos]
+      repos[repoIndex] = {
+        ...repos[repoIndex],
+        services: repos[repoIndex].services.filter((_, idx) => idx !== svcIndex),
+      }
+      return { ...d, repos }
+    })
+  }
+
+  function setRepoId(i: number, value: string) {
+    setDraft((d) => {
+      if (!d) return d
+      const repos = [...d.repos]
+      const oldId = repos[i].id
+      repos[i] = { ...repos[i], id: value }
+      // update newIds tracking if the id changed
+      setNewIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(oldId)) {
+          next.delete(oldId)
+          next.add(value)
+        }
+        return next
+      })
+      return { ...d, repos }
+    })
+  }
+
+  function setServiceId(repoIndex: number, svcIndex: number, value: string) {
+    setDraft((d) => {
+      if (!d) return d
+      const repos = [...d.repos]
+      const services = [...repos[repoIndex].services]
+      const oldId = services[svcIndex].id
+      services[svcIndex] = { ...services[svcIndex], id: value }
+      setNewIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(oldId)) {
+          next.delete(oldId)
+          next.add(value)
+        }
+        return next
+      })
+      repos[repoIndex] = { ...repos[repoIndex], services }
+      return { ...d, repos }
     })
   }
 
@@ -412,8 +554,35 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
                 <div key={repo.id} className={styles.repoCard}>
                   {/* Repo header */}
                   <div className={styles.repoHeader}>
-                    <span className={styles.repoIdPill}>{repo.id}</span>
+                    {newIds.has(repo.id) ? (
+                      <Field
+                        label="Repo ID"
+                        required
+                        path={`repos[${i}].id`}
+                        error={fieldErrors[`repos[${i}].id`]}
+                        hint="Slug: lowercase, digits, hyphens"
+                      >
+                        <input
+                          className={inputClass(fieldErrors[`repos[${i}].id`])}
+                          type="text"
+                          placeholder="my-repo"
+                          value={repo.id}
+                          onChange={(e) => setRepoId(i, e.target.value)}
+                        />
+                      </Field>
+                    ) : (
+                      <span className={styles.repoIdPill}>{repo.id}</span>
+                    )}
                     <span className={styles.repoLabel}>Repository</span>
+                    <button
+                      type="button"
+                      className={styles.removeBtn}
+                      onClick={() => removeRepo(i)}
+                      title="Remove this repo"
+                    >
+                      <Trash2 aria-hidden size={14} strokeWidth={2} />
+                      Remove
+                    </button>
                   </div>
 
                   {/* Repo fields */}
@@ -469,8 +638,35 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
                       return (
                         <div key={svc.id} className={styles.serviceCard}>
                           <div className={styles.serviceHeader}>
-                            <span className={styles.serviceIdPill}>{svc.id}</span>
+                            {newIds.has(svc.id) ? (
+                              <Field
+                                label="Service ID"
+                                required
+                                path={`${sp}.id`}
+                                error={fieldErrors[`${sp}.id`]}
+                                hint="Slug: globally unique"
+                              >
+                                <input
+                                  className={inputClass(fieldErrors[`${sp}.id`])}
+                                  type="text"
+                                  placeholder="my-service"
+                                  value={svc.id}
+                                  onChange={(e) => setServiceId(i, j, e.target.value)}
+                                />
+                              </Field>
+                            ) : (
+                              <span className={styles.serviceIdPill}>{svc.id}</span>
+                            )}
                             <span className={styles.serviceLabel}>Service</span>
+                            <button
+                              type="button"
+                              className={styles.removeBtn}
+                              onClick={() => removeService(i, j)}
+                              title="Remove this service"
+                            >
+                              <Trash2 aria-hidden size={14} strokeWidth={2} />
+                              Remove
+                            </button>
                           </div>
 
                           {/* Identity group */}
@@ -716,10 +912,26 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
                         </div>
                       )
                     })}
+                    <button
+                      type="button"
+                      className={styles.addBtn}
+                      onClick={() => addService(i)}
+                    >
+                      <Plus aria-hidden size={14} strokeWidth={2.5} />
+                      Add Service
+                    </button>
                   </div>
                 </div>
               ))}
             </div>
+            <button
+              type="button"
+              className={styles.addBtn}
+              onClick={addRepo}
+            >
+              <Plus aria-hidden size={14} strokeWidth={2.5} />
+              Add Repo
+            </button>
           </section>
 
           {/* Bottom action bar (mirrors top bar for long forms) */}

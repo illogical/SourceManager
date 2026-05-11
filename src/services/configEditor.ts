@@ -18,6 +18,7 @@ const SCRIPT_RE = /^[a-zA-Z0-9:_-]+$/
 const CIDR_RE = /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/
 const SHELL_META_RE = /[;&|><`$(){}\\\n]/
 const SUBDOMAIN_RE = /^[a-z0-9-]+$/
+const SLUG_RE = /^[a-z0-9-]+$/
 
 function isValidUrl(s: string): boolean {
   try {
@@ -126,11 +127,20 @@ export function validateEditableConfig(proposed: EditableConfig): ValidationResu
     err("repos", "At least one repo is required")
   }
 
+  const repoIds = new Set<string>()
   const serviceIds = new Set<string>()
 
   for (let i = 0; i < (proposed.repos?.length ?? 0); i++) {
     const repo = proposed.repos[i]
     const rp = `repos[${i}]`
+
+    if (!repo.id?.trim() || !SLUG_RE.test(repo.id)) {
+      err(`${rp}.id`, "ID must be non-empty and contain only lowercase letters, digits, and hyphens")
+    } else if (repoIds.has(repo.id)) {
+      err(`${rp}.id`, `Repo id "${repo.id}" is duplicated`)
+    } else {
+      repoIds.add(repo.id)
+    }
 
     if (!repo.displayName?.trim()) {
       err(`${rp}.displayName`, "Display name is required")
@@ -260,10 +270,36 @@ export function diffEditableConfig(current: EditableConfig, proposed: EditableCo
 /**
  * Validate and atomically write the proposed config.
  * - Preserves server.token and all IDs from the current disk file.
+ * - New repos/services (IDs not on disk) are appended; removed entries are dropped.
  * - Writes to a temp file then renames (atomic on POSIX; best-effort on Windows).
  * - Invalidates the in-memory config cache.
  * Pass configPath to override the default (useful in tests).
  */
+
+function mergeService(
+  existing: import("../types").ServiceConfig | undefined,
+  proposed: EditableServiceConfig,
+): import("../types").ServiceConfig {
+  return {
+    ...(existing ?? {}),           // preserves any extra fields from disk (svc.id included if existing)
+    id: existing?.id ?? proposed.id, // use disk id if exists, else proposed
+    displayName: proposed.displayName,
+    packageManager: proposed.packageManager,
+    scriptName: proposed.scriptName,
+    installCommand: proposed.installCommand ?? undefined,
+    port: proposed.port,
+    healthUrl: proposed.healthUrl,
+    healthMode: proposed.healthMode,
+    tags: proposed.tags,
+    allowedIps: proposed.allowedIps,
+    tailnetHostname: proposed.tailnetHostname || undefined,
+    tailnetDomain: proposed.tailnetDomain || undefined,
+    tailscaleServeEnabled: proposed.tailscaleServeEnabled,
+    tailscaleServeMode: proposed.tailscaleServeMode,
+    tailscaleServeTarget: proposed.tailscaleServeTarget || undefined,
+  }
+}
+
 export async function applyEditableConfig(
   proposed: EditableConfig,
   configPath: string = CONFIG_PATH,
@@ -278,7 +314,13 @@ export async function applyEditableConfig(
   // 2. Read current raw config to get immutable fields
   const current = rawRead(configPath)
 
-  // 3. Merge: proposed values over current, preserving token and IDs
+  // Build lookup maps for ID-based merge
+  const currentRepoMap = new Map(current.repos.map((r) => [r.id, r]))
+
+  // 3. Merge: proposed values over current using ID-based lookup.
+  //    - Existing repos/services: update editable fields, preserve token/IDs from disk.
+  //    - New repos/services (ID not found on disk): append verbatim.
+  //    - Repos/services absent from proposal: removed.
   const merged: AppConfig = {
     server: {
       ...current.server,           // preserves token
@@ -286,35 +328,27 @@ export async function applyEditableConfig(
       frontendPort: proposed.server.frontendPort,
       allowedIps: proposed.server.allowedIps,
     },
-    repos: current.repos.map((repo, i) => {
-      const proposedRepo = proposed.repos[i]
-      if (!proposedRepo || proposedRepo.id !== repo.id) return repo
+    repos: proposed.repos.map((proposedRepo) => {
+      const existingRepo = currentRepoMap.get(proposedRepo.id)
+      if (!existingRepo) {
+        // New repo: use proposed data directly
+        return {
+          id: proposedRepo.id,
+          displayName: proposedRepo.displayName,
+          repoPath: proposedRepo.repoPath,
+          defaultBranch: proposedRepo.defaultBranch,
+          services: proposedRepo.services.map((proposedSvc) => mergeService(undefined, proposedSvc)),
+        }
+      }
+      const currentSvcMap = new Map(existingRepo.services.map((s) => [s.id, s]))
       return {
-        ...repo,                    // preserves repo.id
+        ...existingRepo,            // preserves repo.id
         displayName: proposedRepo.displayName,
         repoPath: proposedRepo.repoPath,
         defaultBranch: proposedRepo.defaultBranch,
-        services: repo.services.map((svc, j) => {
-          const proposedSvc = proposedRepo.services[j]
-          if (!proposedSvc || proposedSvc.id !== svc.id) return svc
-          return {
-            ...svc,                 // preserves svc.id
-            displayName: proposedSvc.displayName,
-            packageManager: proposedSvc.packageManager,
-            scriptName: proposedSvc.scriptName,
-            installCommand: proposedSvc.installCommand ?? undefined,
-            port: proposedSvc.port,
-            healthUrl: proposedSvc.healthUrl,
-            healthMode: proposedSvc.healthMode,
-            tags: proposedSvc.tags,
-            allowedIps: proposedSvc.allowedIps,
-            tailnetHostname: proposedSvc.tailnetHostname || undefined,
-            tailnetDomain: proposedSvc.tailnetDomain || undefined,
-            tailscaleServeEnabled: proposedSvc.tailscaleServeEnabled,
-            tailscaleServeMode: proposedSvc.tailscaleServeMode,
-            tailscaleServeTarget: proposedSvc.tailscaleServeTarget || undefined,
-          }
-        }),
+        services: proposedRepo.services.map((proposedSvc) =>
+          mergeService(currentSvcMap.get(proposedSvc.id), proposedSvc)
+        ),
       }
     }),
   }

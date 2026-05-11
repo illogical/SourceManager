@@ -25,7 +25,7 @@ The UI must **not** become an arbitrary shell editor. It exposes only an allowli
 | Diff display | Field-level diff: old value vs new value per changed field |
 | In-memory cache | `cachedConfig` in `config.ts` is invalidated after a successful apply |
 | Tests | Vitest (node) for backend service + routes; Vitest (jsdom) for frontend UI |
-| Non-goals | No `server.token` editing in the UI (security risk); no adding/removing repos/services in MVP (structure edits only) |
+| Non-goals | No `server.token` editing in the UI (security risk) |
 
 ---
 
@@ -710,7 +710,6 @@ Update:
 
 ## Non-goals (explicitly out of scope for SO-4)
 
-- Adding or removing repos/services through the UI (structure changes) — only field edits are supported
 - Editing `server.token` through the UI — rotate tokens directly in the file
 - Managing external dependency services (Qdrant, Neo4j, Ollama, Docker)
 - Public `tailscale funnel` support
@@ -724,9 +723,45 @@ Update:
 |---|---|
 | No arbitrary command injection | `scriptName` validated against `/^[a-zA-Z0-9:_-]+$/`; `installCommand` validated against no shell metacharacters (`; & | > < \` $ ( ) { }`) |
 | Token never in API response | `readEditableConfig()` strips `server.token`; apply merges token from disk, not from the request body |
-| ID immutability | `applyEditableConfig()` always takes `id` from the current on-disk config, ignoring any `id` sent by the client |
+| ID immutability for existing entries | `applyEditableConfig()` takes `id` from the current on-disk config for repos/services that already exist; new entries may supply a user-chosen ID |
+| New IDs validated | New repo/service IDs must match `[a-z0-9-]+` and be globally unique; validated at both frontend and backend |
 | Atomic write | Temp file + rename; avoids truncated config on crash or power failure |
 | Auth required | All three endpoints require `X-DevServer-Token` header (existing middleware) |
+
+---
+
+## Structural editing (additive change — SO-4 extension)
+
+Users need to add new repos and services, and remove existing ones, through the Settings UI. The MVP field-edit approach is extended as follows.
+
+### Backend: ID-based merge (replaces index-based)
+
+`applyEditableConfig` switches from index-based to **ID-based** merging:
+
+1. Build a `Map<id, RepoConfig>` from the current disk config.
+2. For each `proposedRepo` in `proposed.repos`:
+   - If the ID is found in the map → update editable fields (same as before).
+   - If the ID is **not** found → treat as a new repo; use proposed values verbatim.
+3. Repos in the current config **not present** in the proposal are dropped (user deleted them).
+4. Same logic for services within each repo (using a per-repo service ID map).
+
+This means the proposal fully defines the resulting structure — order is preserved as sent by the client.
+
+### Backend: ID validation additions
+
+`validateEditableConfig` gains:
+- Repo IDs must match `/^[a-z0-9-]+$/` and be unique within the proposal.
+- Service IDs must match `/^[a-z0-9-]+$/` and be unique globally across all repos.
+- Empty ID → error.
+
+### Frontend: Add / Remove controls
+
+- **"Add Repo" button** below the repo list — inserts a blank repo with a user-editable ID field (pre-filled with `new-repo`).
+- **"Remove" button** on each repo card — removes it from the draft (with a brief confirmation if the repo has services).
+- **"Add Service" button** at the bottom of each repo's service list — inserts a blank service with a user-editable ID.
+- **"Remove" button** on each service card — removes it from the draft.
+- New repo/service entries show an editable **ID field** (validated inline). Existing entries still show the ID as a read-only pill.
+- A `newIds: Set<string>` in component state tracks which IDs were created this session so the UI knows which to show as editable vs read-only.
 
 ---
 
