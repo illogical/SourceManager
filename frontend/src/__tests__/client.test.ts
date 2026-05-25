@@ -91,9 +91,34 @@ describe("API calls with token", () => {
 
   it("throws ApiError on 500", async () => {
     vi.stubGlobal("fetch", mockFetch(500, { error: "Internal server error" }))
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
     const err = await listRepos().catch((e) => e)
     expect(err).toBeInstanceOf(ApiError)
     expect((err as ApiError).status).toBe(500)
+    expect((err as ApiError).message).toBe("API error 500: Internal server error")
+    expect(consoleError).toHaveBeenCalledWith("[SourceManager API] request failed", {
+      path: "/v1/repos",
+      method: "GET",
+      status: 500,
+      body: { error: "Internal server error" },
+    })
+  })
+
+  it("includes structured lifecycle failure details in ApiError messages", async () => {
+    const body = {
+      error: "Failed to start service",
+      code: "SERVICE_SPAWN_FAILED",
+      message: "spawn ENOENT",
+    }
+    vi.stubGlobal("fetch", mockFetch(500, body))
+    vi.spyOn(console, "error").mockImplementation(() => {})
+
+    const err = await listRepos().catch((e) => e)
+
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).message).toContain("Failed to start service")
+    expect((err as ApiError).message).toContain("spawn ENOENT")
+    expect((err as ApiError).message).toContain("SERVICE_SPAWN_FAILED")
   })
 
   it("returns parsed repos on success", async () => {

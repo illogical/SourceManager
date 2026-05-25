@@ -12,13 +12,34 @@ export class AuthError extends Error {
 }
 
 export class ApiError extends Error {
+  public readonly detail: string
+
   constructor(
     public readonly status: number,
     public readonly body: unknown,
   ) {
-    super(`API error ${status}`)
+    const detail = stringifyApiBody(body)
+    super(detail ? `API error ${status}: ${detail}` : `API error ${status}`)
     this.name = "ApiError"
+    this.detail = detail
   }
+}
+
+function stringifyApiBody(body: unknown): string {
+  if (body == null) return ""
+  if (typeof body === "string") return body
+  if (typeof body === "object") {
+    const record = body as Record<string, unknown>
+    const parts = [record.error, record.message, record.code]
+      .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    if (parts.length > 0) return parts.join(" - ")
+    try {
+      return JSON.stringify(body)
+    } catch {
+      return String(body)
+    }
+  }
+  return String(body)
 }
 
 // ── Token helpers ──────────────────────────────────────────────────────────────
@@ -59,6 +80,12 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     } catch {
       body = await res.text()
     }
+    console.error("[SourceManager API] request failed", {
+      path,
+      method: options.method ?? "GET",
+      status: res.status,
+      body,
+    })
     throw new ApiError(res.status, body)
   }
 

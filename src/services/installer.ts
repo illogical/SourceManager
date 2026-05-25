@@ -1,5 +1,6 @@
 import { join } from "path"
 import type { ServiceConfig, StepResult } from "../types"
+import { packageManagerInstallCommand } from "./packageManager"
 
 type PackageManager = "bun" | "npm" | "yarn" | "pnpm"
 
@@ -32,7 +33,7 @@ export async function runInstall(
     const pm = service.packageManager === "auto"
       ? await detectPackageManager(repoPath)
       : service.packageManager
-    installCommand = [pm, "install"]
+    installCommand = packageManagerInstallCommand(pm)
   }
 
   const [cmd, ...args] = installCommand

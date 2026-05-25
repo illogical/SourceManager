@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 import { detectPackageManager, runInstall } from "../../src/services/installer"
+import { packageManagerExecutable } from "../../src/services/packageManager"
 
 // ── Temp directory helpers ────────────────────────────────────────────────────
 
@@ -160,7 +161,7 @@ describe("runInstall", () => {
     const svc = makeService({ repoPath: dir, packageManager: "auto" })
     await runInstall(svc.repoPath, svc)
     expect(spawnSpy).toHaveBeenCalledWith(
-      expect.arrayContaining(["npm", "install"]),
+      expect.arrayContaining([packageManagerExecutable("npm"), "install"]),
       expect.any(Object)
     )
   })

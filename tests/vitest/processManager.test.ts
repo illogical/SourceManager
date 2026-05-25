@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { ProcessManager } from "../../src/services/processManager"
+import { packageManagerExecutable } from "../../src/services/packageManager"
 import type { RepoConfig, ServiceConfig } from "../../src/types"
 
 function makeRepo(overrides?: Partial<RepoConfig>): RepoConfig {
@@ -72,6 +73,46 @@ describe("ProcessManager.start — idempotent", () => {
     expect(result.success).toBe(true)
     expect(result.pid).toBe(99999)
     expect(result.lifecycleState).toBe("starting")
+  })
+
+  it("returns diagnostics when spawning a service throws", async () => {
+    const pm = makePm()
+    pm._spawnProcess = vi.fn(() => {
+      throw new Error("spawn ENOENT")
+    })
+    const service = makeService({ packageManager: "npm" })
+
+    const result = await pm.start(makeRepo(), service)
+
+    expect(result.success).toBe(false)
+    expect(result.lifecycleState).toBe("failed")
+    expect(result.message).toContain("spawn ENOENT")
+    expect(result.diagnostics).toMatchObject({
+      code: "SERVICE_SPAWN_FAILED",
+      repoId: "test-repo",
+      serviceId: "test-service",
+      repoPath: "/dev/test-repo",
+      packageManager: "npm",
+      message: "spawn ENOENT",
+    })
+    expect(result.diagnostics?.command).toEqual([
+      packageManagerExecutable("npm"),
+      "run",
+      "dev",
+    ])
+  })
+})
+
+describe("packageManagerExecutable", () => {
+  it("uses .cmd wrappers for npm-like package managers on Windows", () => {
+    expect(packageManagerExecutable("npm", "win32")).toBe("npm.cmd")
+    expect(packageManagerExecutable("pnpm", "win32")).toBe("pnpm.cmd")
+    expect(packageManagerExecutable("yarn", "win32")).toBe("yarn.cmd")
+  })
+
+  it("keeps bun and non-Windows package managers unchanged", () => {
+    expect(packageManagerExecutable("bun", "win32")).toBe("bun")
+    expect(packageManagerExecutable("npm", "linux")).toBe("npm")
   })
 })
 

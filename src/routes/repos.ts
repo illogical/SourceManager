@@ -149,15 +149,17 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
   // POST /repos/:repoId/services/:serviceId/start
   .post(
     "/:repoId/services/:serviceId/start",
-    async ({ params }) => {
+    async ({ params, set }) => {
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
       const result = await processManager.start(repo, service)
+      if (!result.success) set.status = 500
       return {
         serviceId: service.id,
         repoId: repo.id,
         success: result.success,
         message: result.message,
+        diagnostics: result.diagnostics ?? null,
         portKillResult: result.portKillResult ?? null,
         lifecycle: await buildLifecycle(service),
       }
@@ -191,15 +193,17 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
   // POST /repos/:repoId/services/:serviceId/restart
   .post(
     "/:repoId/services/:serviceId/restart",
-    async ({ params }) => {
+    async ({ params, set }) => {
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
       const result = await processManager.restart(repo, service)
+      if (!result.success) set.status = 500
       return {
         serviceId: service.id,
         repoId: repo.id,
         success: result.success,
         message: result.message,
+        diagnostics: result.diagnostics ?? null,
         portKillResult: result.portKillResult ?? null,
         lifecycle: await buildLifecycle(service),
       }

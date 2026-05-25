@@ -3,6 +3,7 @@ import { fileURLToPath } from "url"
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { detectPackageManager } from "./installer"
 import { checkHealth } from "./healthCheck"
+import { packageManagerExecutable, packageManagerRunCommand, type RunnablePackageManager } from "./packageManager"
 import type { LifecycleState, PortEntry, RepoConfig, ServiceConfig, ServiceProcessState } from "../types"
 
 const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
@@ -20,6 +21,18 @@ interface StartResult {
   lifecycleState?: LifecycleState
   pid?: number
   portKillResult?: { killed: boolean; previousPid: number; error?: string }
+  diagnostics?: StartDiagnostics
+}
+
+interface StartDiagnostics {
+  code: "PACKAGE_MANAGER_DETECTION_FAILED" | "SERVICE_SPAWN_FAILED"
+  repoId: string
+  serviceId: string
+  repoPath: string
+  packageManager?: string
+  executable?: string
+  command?: string[]
+  message: string
 }
 
 interface StopResult {
@@ -191,19 +204,60 @@ export class ProcessManager {
     }
 
     // Build start command
-    const pm = service.packageManager === "auto"
-      ? await detectPackageManager(repo.repoPath)
-      : service.packageManager
+    let pm: RunnablePackageManager
+    try {
+      pm = service.packageManager === "auto"
+        ? await detectPackageManager(repo.repoPath)
+        : service.packageManager
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return {
+        success: false,
+        message: `Could not detect package manager for "${service.id}": ${message}`,
+        diagnostics: {
+          code: "PACKAGE_MANAGER_DETECTION_FAILED",
+          repoId: repo.id,
+          serviceId: service.id,
+          repoPath: repo.repoPath,
+          packageManager: service.packageManager,
+          message,
+        },
+      }
+    }
 
-    const command = [pm, "run", service.scriptName]
+    const executable = packageManagerExecutable(pm)
+    const command = packageManagerRunCommand(pm, service.scriptName)
     console.log(`[ProcessManager] Starting "${service.id}": ${command.join(" ")} in ${repo.repoPath}`)
 
-    const proc = this._spawnProcess(command, {
-      cwd: repo.repoPath,
-      stdout: "inherit",
-      stderr: "inherit",
-      env: { ...process.env },
-    })
+    let proc: { pid: number; exited: Promise<number> }
+    try {
+      proc = this._spawnProcess(command, {
+        cwd: repo.repoPath,
+        stdout: "inherit",
+        stderr: "inherit",
+        env: { ...process.env },
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const diagnostics: StartDiagnostics = {
+        code: "SERVICE_SPAWN_FAILED",
+        repoId: repo.id,
+        serviceId: service.id,
+        repoPath: repo.repoPath,
+        packageManager: pm,
+        executable,
+        command,
+        message,
+      }
+      console.error(`[ProcessManager] Failed to spawn "${service.id}":`, diagnostics)
+      return {
+        success: false,
+        message: `Failed to spawn service "${service.id}": ${message}`,
+        lifecycleState: "failed",
+        portKillResult,
+        diagnostics,
+      }
+    }
 
     const state: ServiceProcessState = {
       serviceId: service.id,

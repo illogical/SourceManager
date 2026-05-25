@@ -64,6 +64,8 @@ beforeEach(async () => {
   const { processManager } = await import("../../../src/services/processManager")
   const { checkHealth } = await import("../../../src/services/healthCheck")
   vi.mocked(processManager.getProcess).mockReturnValue(null)
+  vi.mocked(processManager.start).mockResolvedValue({ success: true, message: "Started", lifecycleState: "starting", pid: 1234 })
+  vi.mocked(processManager.restart).mockResolvedValue({ success: true, message: "Restarted", lifecycleState: "starting", pid: 1234 })
   vi.mocked(checkHealth).mockResolvedValue({ status: "fail", durationMs: 5 })
 })
 
@@ -197,6 +199,33 @@ describe("POST /v1/repos/:repoId/services/:serviceId/start", () => {
     const body = (await res.json()) as { success: boolean; serviceId: string }
     expect(body.success).toBe(true)
     expect(body.serviceId).toBe("my-repo-web")
+  })
+
+  it("returns 500 with diagnostics when start fails", async () => {
+    const { processManager } = await import("../../../src/services/processManager")
+    vi.mocked(processManager.start).mockResolvedValueOnce({
+      success: false,
+      message: "Failed to spawn service",
+      lifecycleState: "failed",
+      diagnostics: {
+        code: "SERVICE_SPAWN_FAILED",
+        repoId: "my-repo",
+        serviceId: "my-repo-web",
+        repoPath: "/dev/my-repo",
+        packageManager: "npm",
+        executable: "npm",
+        command: ["npm", "run", "dev"],
+        message: "spawn ENOENT",
+      },
+    })
+
+    const app = await buildApp()
+    const res = await app.handle(req("/repos/my-repo/services/my-repo-web/start", { method: "POST" }))
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { success: boolean; diagnostics: { code: string; command: string[] } }
+    expect(body.success).toBe(false)
+    expect(body.diagnostics.code).toBe("SERVICE_SPAWN_FAILED")
+    expect(body.diagnostics.command).toEqual(["npm", "run", "dev"])
   })
 })
 
