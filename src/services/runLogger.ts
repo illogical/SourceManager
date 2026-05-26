@@ -1,7 +1,7 @@
 import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 import { readFile, writeFile, appendFile, mkdir, access } from "node:fs/promises"
-import type { RunReport } from "../types"
+import type { LifecycleRunReport, RunReport } from "../types"
 
 const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
 const LOG_DIR = join(_dir, "..", "..", "data", "logs")
@@ -35,7 +35,14 @@ export async function logRun(report: RunReport): Promise<void> {
   await appendFile(path, line, "utf-8")
 }
 
-export async function readRecentLogs(serviceId: string, n = 20): Promise<RunReport[]> {
+export async function logLifecycleRun(report: LifecycleRunReport): Promise<void> {
+  await ensureLogDir()
+  const line = JSON.stringify(report) + "\n"
+  const path = runLogPath(todayStr())
+  await appendFile(path, line, "utf-8")
+}
+
+export async function readRecentLogs(serviceId: string, n = 20): Promise<Array<RunReport | LifecycleRunReport>> {
   const path = runLogPath(todayStr())
 
   if (!(await fileExists(path))) return []
@@ -49,10 +56,10 @@ export async function readRecentLogs(serviceId: string, n = 20): Promise<RunRepo
 
   const lines = content.split("\n").filter(Boolean)
 
-  const entries: RunReport[] = []
+  const entries: Array<RunReport | LifecycleRunReport> = []
   for (const line of lines) {
     try {
-      const entry = JSON.parse(line) as RunReport
+      const entry = JSON.parse(line) as RunReport | LifecycleRunReport
       if (entry.serviceId === serviceId) entries.push(entry)
     } catch {
       // Skip malformed lines

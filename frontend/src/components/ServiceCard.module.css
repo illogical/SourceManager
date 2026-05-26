@@ -25,6 +25,10 @@
   --state-color: #fbbf24;
 }
 
+.card[data-state="stopping"] {
+  --state-color: #f472b6;
+}
+
 .card[data-state="stopped"] {
   --state-color: #7c8fac;
 }

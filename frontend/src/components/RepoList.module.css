@@ -194,6 +194,10 @@
   color: #ffd166;
 }
 
+.stateCount[data-state="stopping"] {
+  color: #f9a8d4;
+}
+
 .stateCount[data-state="failed"] {
   color: #ff7a90;
 }

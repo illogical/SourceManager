@@ -173,15 +173,19 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
   // POST /repos/:repoId/services/:serviceId/stop
   .post(
     "/:repoId/services/:serviceId/stop",
-    async ({ params }) => {
-      requireRepo(params.repoId)
+    async ({ params, set }) => {
+      const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
-      const result = await processManager.stop(service.id)
+      const result = await processManager.stop(service, repo)
+      if (!result.success) set.status = 500
       return {
         serviceId: service.id,
+        repoId: repo.id,
         success: result.success,
         alreadyStopped: result.alreadyStopped,
         message: result.message,
+        diagnostics: result.diagnostics ?? null,
+        lifecycle: await buildLifecycle(service),
       }
     },
     {

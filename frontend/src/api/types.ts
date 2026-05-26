@@ -1,6 +1,6 @@
 // ── Lifecycle ──────────────────────────────────────────────────────────────────
 
-export type LifecycleState = "starting" | "running" | "stopped" | "failed"
+export type LifecycleState = "starting" | "running" | "stopping" | "stopped" | "failed"
 
 export interface Lifecycle {
   state: LifecycleState

@@ -10,6 +10,7 @@ const GROUP_ACCENTS = ["#2dd4bf", "#60a5fa", "#a78bfa", "#f59e0b", "#fb7185", "#
 const STATE_LABELS: Record<LifecycleState, string> = {
   running: "Running",
   starting: "Starting",
+  stopping: "Stopping",
   stopped: "Stopped",
   failed: "Failed",
 }
@@ -113,7 +114,7 @@ export default function RepoList() {
           </div>
           <div className={styles.metric} data-state="attention">
             <ShieldAlert aria-hidden="true" size={18} strokeWidth={2.2} />
-            <span className={styles.metricValue}>{summary.failed + summary.starting}</span>
+            <span className={styles.metricValue}>{summary.failed + summary.starting + summary.stopping}</span>
             <span className={styles.metricLabel}>Attention</span>
           </div>
           <button
@@ -188,7 +189,7 @@ function getSummary(repos: RepoSummary[]) {
       }
       return acc
     },
-    { total: 0, running: 0, starting: 0, stopped: 0, failed: 0 },
+    { total: 0, running: 0, starting: 0, stopping: 0, stopped: 0, failed: 0 },
   )
   return counts
 }
@@ -199,6 +200,6 @@ function countStates(repo: RepoSummary): Record<LifecycleState, number> {
       acc[service.lifecycle.state] += 1
       return acc
     },
-    { running: 0, starting: 0, stopped: 0, failed: 0 },
+    { running: 0, starting: 0, stopping: 0, stopped: 0, failed: 0 },
   )
 }

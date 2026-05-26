@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { ProcessManager } from "../../src/services/processManager"
 import { packageManagerExecutable } from "../../src/services/packageManager"
-import type { RepoConfig, ServiceConfig } from "../../src/types"
+import type { RepoConfig, ServiceConfig, ServiceProcessState } from "../../src/types"
 
 function makeRepo(overrides?: Partial<RepoConfig>): RepoConfig {
   return {
@@ -31,9 +31,14 @@ function makeService(overrides?: Partial<ServiceConfig>): ServiceConfig {
 
 function makePm() {
   const pm = new ProcessManager()
+  pm._persistState = false
   pm._isProcessAlive = vi.fn(() => false)
   pm._findPidOnPort = vi.fn(async () => null)
   pm._checkHealth = vi.fn(async () => ({ status: "fail" as const, durationMs: 10 }))
+  pm._killPid = vi.fn(async () => ({ success: true }))
+  pm._logLifecycleRun = vi.fn(async () => {})
+  pm._stopPollIntervalMs = 1
+  pm._stopPollTimeoutMs = 5
   pm._spawnProcess = vi.fn(() => ({
     pid: 99999,
     exited: new Promise<number>(() => {}), // never resolves by default
@@ -41,12 +46,101 @@ function makePm() {
   return pm
 }
 
+function injectProcess(pm: ProcessManager, overrides?: Partial<ServiceProcessState>) {
+  const state: ServiceProcessState = {
+    serviceId: "test-service",
+    repoId: "test-repo",
+    pid: 11111,
+    port: 3000,
+    startedAt: new Date().toISOString(),
+    command: "bun run dev",
+    lifecycleState: "running",
+    readySince: new Date().toISOString(),
+    ...overrides,
+  }
+  const internals = pm as unknown as {
+    processes: Map<string, ServiceProcessState>
+    portMap: Map<number, string>
+  }
+  internals.processes.set(state.serviceId, state)
+  internals.portMap.set(state.port, state.serviceId)
+  return state
+}
+
 describe("ProcessManager.stop — idempotent", () => {
   it("returns alreadyStopped=true when service is not tracked", async () => {
     const pm = makePm()
-    const result = await pm.stop("unknown-service")
+    const result = await pm.stop(makeService({ id: "unknown-service" }))
     expect(result.success).toBe(true)
     expect(result.alreadyStopped).toBe(true)
+  })
+
+  it("sets lifecycle to stopping before killing the tracked PID", async () => {
+    const pm = makePm()
+    injectProcess(pm)
+    pm._killPid = vi.fn(async () => {
+      expect(pm.getLifecycleState("test-service")).toBe("stopping")
+      return { success: true }
+    })
+
+    const result = await pm.stop(makeService())
+
+    expect(result.success).toBe(true)
+    expect(pm._killPid).toHaveBeenCalledWith(11111)
+    expect(pm.getLifecycleState("test-service")).toBe("stopped")
+  })
+
+  it("kills a remaining port PID after killing the tracked parent PID", async () => {
+    const pm = makePm()
+    injectProcess(pm)
+    pm._findPidOnPort = vi.fn()
+      .mockResolvedValueOnce(22222)
+      .mockResolvedValueOnce(22222)
+      .mockResolvedValueOnce(null)
+    pm._killPid = vi.fn(async () => ({ success: true }))
+
+    const result = await pm.stop(makeService())
+
+    expect(result.success).toBe(true)
+    expect(pm._killPid).toHaveBeenNthCalledWith(1, 11111)
+    expect(pm._killPid).toHaveBeenNthCalledWith(2, 22222)
+    expect(result.lifecycleState).toBe("stopped")
+  })
+
+  it("stops an untracked service by killing the PID found on its configured port", async () => {
+    const pm = makePm()
+    pm._findPidOnPort = vi.fn()
+      .mockResolvedValueOnce(22222)
+      .mockResolvedValueOnce(22222)
+      .mockResolvedValueOnce(null)
+    pm._killPid = vi.fn(async () => ({ success: true }))
+
+    const result = await pm.stop(makeService())
+
+    expect(result.success).toBe(true)
+    expect(result.alreadyStopped).toBe(false)
+    expect(pm._killPid).toHaveBeenCalledWith(22222)
+  })
+
+  it("returns diagnostics and preserves lastError when stop verification fails", async () => {
+    const pm = makePm()
+    injectProcess(pm)
+    pm._findPidOnPort = vi.fn(async () => 22222)
+    pm._checkHealth = vi.fn(async () => ({ status: "pass" as const, durationMs: 4 }))
+
+    const result = await pm.stop(makeService())
+    const state = pm.getProcess("test-service")
+
+    expect(result.success).toBe(false)
+    expect(result.lifecycleState).toBe("failed")
+    expect(result.diagnostics).toMatchObject({
+      code: "SERVICE_STOP_PORT_STILL_LISTENING",
+      serviceId: "test-service",
+      port: 3000,
+      portPidAfter: 22222,
+    })
+    expect(state?.lifecycleState).toBe("failed")
+    expect(state?.lastError).toContain("Stop verification failed")
   })
 })
 

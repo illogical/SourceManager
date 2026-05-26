@@ -52,6 +52,17 @@ describe("RepoList", () => {
     expect(screen.getByText("gamma API")).toBeInTheDocument()
   })
 
+  it("includes stopping services in project counts and attention", async () => {
+    const repo = makeRepo("delta")
+    repo.services[0].lifecycle.state = "stopping"
+    vi.spyOn(client, "listRepos").mockResolvedValue({ repos: [repo] })
+
+    await act(async () => { render(<RepoList />) })
+
+    expect(screen.getByText("Stopping")).toBeInTheDocument()
+    expect(screen.getAllByText("1").length).toBeGreaterThan(0)
+  })
+
   it("shows error banner on AuthError", async () => {
     vi.spyOn(client, "listRepos").mockRejectedValue(new client.AuthError())
     await act(async () => { render(<RepoList />) })

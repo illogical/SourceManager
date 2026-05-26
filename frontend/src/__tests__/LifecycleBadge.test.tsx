@@ -6,6 +6,7 @@ describe("LifecycleBadge", () => {
   const cases: Array<[LifecycleState, string]> = [
     ["running", "running"],
     ["starting", "starting"],
+    ["stopping", "stopping"],
     ["stopped", "stopped"],
     ["failed", "failed"],
   ]

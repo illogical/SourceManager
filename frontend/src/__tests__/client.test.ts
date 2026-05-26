@@ -121,6 +121,21 @@ describe("API calls with token", () => {
     expect((err as ApiError).message).toContain("SERVICE_SPAWN_FAILED")
   })
 
+  it("includes nested stop diagnostics codes in ApiError messages", async () => {
+    const body = {
+      message: "Stop verification failed",
+      diagnostics: { code: "SERVICE_STOP_PORT_STILL_LISTENING" },
+    }
+    vi.stubGlobal("fetch", mockFetch(500, body))
+    vi.spyOn(console, "error").mockImplementation(() => {})
+
+    const err = await listRepos().catch((e) => e)
+
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).message).toContain("Stop verification failed")
+    expect((err as ApiError).message).toContain("SERVICE_STOP_PORT_STILL_LISTENING")
+  })
+
   it("returns parsed repos on success", async () => {
     const repos = [{ id: "my-repo", displayName: "My Repo", services: [] }]
     vi.stubGlobal("fetch", mockFetch(200, { repos }))

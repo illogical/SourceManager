@@ -110,6 +110,24 @@ describe("ServiceCard", () => {
     expect(screen.getByRole("button", { name: "Start service" })).not.toBeDisabled()
   })
 
+  it("disables all actions while state is stopping", () => {
+    render(
+      <ServiceCard
+        repoId="my-repo"
+        service={makeService({ lifecycle: { ...makeService().lifecycle, state: "stopping" } })}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onRestart={vi.fn()}
+        onUpdate={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText(/stopping/i)).toBeInTheDocument()
+    for (const btn of screen.getAllByRole("button")) {
+      expect(btn).toBeDisabled()
+    }
+  })
+
   it("clicking the start toggle calls onStart with repoId and serviceId", async () => {
     const onStart = vi.fn().mockResolvedValue(undefined)
     render(

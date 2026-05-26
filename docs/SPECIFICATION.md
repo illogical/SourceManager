@@ -178,16 +178,17 @@ All fields optional. Defaults: branch from repo config, `installMode=auto`, `res
 
 ## Lifecycle states
 
-Services transition through: `starting` → `running` | `failed`, or `stopped`.
+Services transition through: `starting` → `running` | `failed`, `running` → `stopping` → `stopped` | `failed`, or `stopped`.
 
 | State | Description |
 |-------|-------------|
 | `starting` | Process spawned; health poll in progress (up to 30s) |
 | `running` | Health check passed; process is live |
+| `stopping` | Stop requested; tracked PID and configured port listener are being terminated and verified |
 | `stopped` | Not running (never started or cleanly stopped) |
 | `failed` | Process exited before becoming ready, or health poll timed out |
 
-State is persisted to `data/state.json` after every change. On API restart, stale PIDs are pruned and any `starting` state is transitioned to `failed`.
+State is persisted to `data/state.json` after every change. On API restart, stale PIDs are pruned and any `starting` or `stopping` state is transitioned to `failed`.
 
 ## Safe update state machine
 

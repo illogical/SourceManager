@@ -22,6 +22,7 @@ export default function ServiceCard({ repoId, service, onStart, onStop, onRestar
   const state = lifecycle.state
   const isPending = pendingAction !== null
   const isRunning = state === "running" || state === "starting"
+  const isStopping = state === "stopping"
 
   const tailnetUrl =
     tailnet?.hostname && tailnet?.domain
@@ -44,15 +45,17 @@ export default function ServiceCard({ repoId, service, onStart, onStop, onRestar
     lifecycle.state === "running" && lifecycle.uptimeMs != null
       ? formatUptime(lifecycle.uptimeMs)
       : null
-  const toggleLabel = isRunning ? "Stop service" : "Start service"
-  const toggleIcon = isRunning ? Square : Play
-  const toggleVariant = isRunning ? "stop" : "start"
+  const toggleLabel = isRunning || isStopping ? "Stop service" : "Start service"
+  const toggleIcon = isRunning || isStopping ? Square : Play
+  const toggleVariant = isRunning || isStopping ? "stop" : "start"
   const canRestart = state === "running"
-  const canUpdate = state !== "starting"
+  const canUpdate = state !== "starting" && state !== "stopping"
 
   async function handleToggle() {
     if (isRunning) {
       await run("stop", () => onStop(repoId, service.id))
+    } else if (isStopping) {
+      return
     } else {
       await run("start", () => onStart(repoId, service.id))
     }
@@ -93,8 +96,8 @@ export default function ServiceCard({ repoId, service, onStart, onStop, onRestar
           label={toggleLabel}
           icon={toggleIcon}
           variant={toggleVariant}
-          disabled={isPending}
-          loading={pendingAction === "start" || pendingAction === "stop"}
+          disabled={isPending || isStopping}
+          loading={pendingAction === "start" || pendingAction === "stop" || isStopping}
           onClick={handleToggle}
         />
         <ActionButton

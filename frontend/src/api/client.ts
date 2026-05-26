@@ -30,7 +30,8 @@ function stringifyApiBody(body: unknown): string {
   if (typeof body === "string") return body
   if (typeof body === "object") {
     const record = body as Record<string, unknown>
-    const parts = [record.error, record.message, record.code]
+    const diagnostics = record.diagnostics as Record<string, unknown> | null | undefined
+    const parts = [record.error, record.message, record.code, diagnostics?.code]
       .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
     if (parts.length > 0) return parts.join(" - ")
     try {

@@ -61,12 +61,27 @@ vi.mock("../../../src/services/runLogger", () => ({
 }))
 
 beforeEach(async () => {
+  vi.restoreAllMocks()
+  const config = await import("../../../src/config")
   const { processManager } = await import("../../../src/services/processManager")
-  const { checkHealth } = await import("../../../src/services/healthCheck")
-  vi.mocked(processManager.getProcess).mockReturnValue(null)
-  vi.mocked(processManager.start).mockResolvedValue({ success: true, message: "Started", lifecycleState: "starting", pid: 1234 })
-  vi.mocked(processManager.restart).mockResolvedValue({ success: true, message: "Restarted", lifecycleState: "starting", pid: 1234 })
-  vi.mocked(checkHealth).mockResolvedValue({ status: "fail", durationMs: 5 })
+  const healthCheck = await import("../../../src/services/healthCheck")
+  vi.spyOn(config, "getConfig").mockReturnValue({
+    server: { port: 17106, token: "test-token", allowedIps: [] },
+    repos: [testRepoWithService],
+  })
+  vi.spyOn(config, "requireRepo").mockImplementation((id: string) => {
+    if (id === testRepo.id) return testRepoWithService
+    throw new Error(`Repo not found: "${id}"`)
+  })
+  vi.spyOn(config, "requireService").mockImplementation((id: string) => {
+    if (id === testService.id) return { repo: testRepoWithService, service: testService }
+    throw new Error(`Service not found: "${id}"`)
+  })
+  vi.spyOn(processManager, "getProcess").mockReturnValue(null)
+  vi.spyOn(processManager, "start").mockResolvedValue({ success: true, message: "Started", lifecycleState: "starting", pid: 1234 })
+  vi.spyOn(processManager, "stop").mockResolvedValue({ success: true, alreadyStopped: false, message: "Stopped", lifecycleState: "stopped" })
+  vi.spyOn(processManager, "restart").mockResolvedValue({ success: true, message: "Restarted", lifecycleState: "starting", pid: 1234 })
+  vi.spyOn(healthCheck, "checkHealth").mockResolvedValue({ status: "fail", durationMs: 5 })
 })
 
 // ── App builder ───────────────────────────────────────────────────────────────
@@ -231,11 +246,40 @@ describe("POST /v1/repos/:repoId/services/:serviceId/start", () => {
 
 describe("POST /v1/repos/:repoId/services/:serviceId/stop", () => {
   it("returns 200 with stop result", async () => {
+    const { processManager } = await import("../../../src/services/processManager")
     const app = await buildApp()
     const res = await app.handle(req("/repos/my-repo/services/my-repo-web/stop", { method: "POST" }))
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { success: boolean; alreadyStopped: boolean }
+    const body = (await res.json()) as { success: boolean; alreadyStopped: boolean; lifecycle: { state: string } }
     expect(body.success).toBe(true)
+    expect(body.lifecycle.state).toBe("stopped")
+    expect(processManager.stop).toHaveBeenCalledWith(testService, testRepoWithService)
+  })
+
+  it("returns 500 with diagnostics when stop fails", async () => {
+    const { processManager } = await import("../../../src/services/processManager")
+    vi.mocked(processManager.stop).mockResolvedValueOnce({
+      success: false,
+      alreadyStopped: false,
+      message: "Stop verification failed",
+      lifecycleState: "failed",
+      diagnostics: {
+        code: "SERVICE_STOP_PORT_STILL_LISTENING",
+        serviceId: "my-repo-web",
+        port: 3000,
+        portPidAfter: 22222,
+        attempts: [],
+        message: "port still listening",
+      },
+    })
+
+    const app = await buildApp()
+    const res = await app.handle(req("/repos/my-repo/services/my-repo-web/stop", { method: "POST" }))
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { success: boolean; diagnostics: { code: string; portPidAfter: number } }
+    expect(body.success).toBe(false)
+    expect(body.diagnostics.code).toBe("SERVICE_STOP_PORT_STILL_LISTENING")
+    expect(body.diagnostics.portPidAfter).toBe(22222)
   })
 })
 

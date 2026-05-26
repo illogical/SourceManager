@@ -3,13 +3,16 @@ import { fileURLToPath } from "url"
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { detectPackageManager } from "./installer"
 import { checkHealth } from "./healthCheck"
+import { logLifecycleRun } from "./runLogger"
 import { packageManagerExecutable, packageManagerRunCommand, type RunnablePackageManager } from "./packageManager"
-import type { LifecycleState, PortEntry, RepoConfig, ServiceConfig, ServiceProcessState } from "../types"
+import type { HealthCheckResult, LifecycleState, PortEntry, RepoConfig, ServiceConfig, ServiceProcessState, StepResult } from "../types"
 
 const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
 const STATE_PATH = join(_dir, "..", "..", "data", "state.json")
 const HEALTH_POLL_INTERVAL_MS = 1_000
 const HEALTH_POLL_TIMEOUT_MS = 30_000
+const STOP_POLL_INTERVAL_MS = 250
+const STOP_POLL_TIMEOUT_MS = 5_000
 
 interface StateFile {
   processes: Record<string, ServiceProcessState>
@@ -39,6 +42,32 @@ interface StopResult {
   success: boolean
   alreadyStopped: boolean
   message: string
+  lifecycleState?: LifecycleState
+  diagnostics?: StopDiagnostics
+}
+
+interface StopAttempt {
+  target: "tracked-pid" | "port-pid"
+  pid: number
+  success: boolean
+  error?: string
+}
+
+interface StopDiagnostics {
+  code: "SERVICE_STOP_VERIFICATION_FAILED" | "SERVICE_STOP_KILL_FAILED" | "SERVICE_STOP_PORT_STILL_LISTENING"
+  serviceId: string
+  port: number
+  trackedPid?: number
+  portPidBefore?: number | null
+  portPidAfter?: number | null
+  attempts: StopAttempt[]
+  message: string
+}
+
+interface StopVerification {
+  stopped: boolean
+  portPid: number | null
+  health: HealthCheckResult
 }
 
 export class ProcessManager {
@@ -54,6 +83,12 @@ export class ProcessManager {
     const proc = Bun.spawn(cmd as string[], opts as Parameters<typeof Bun.spawn>[1])
     return { pid: proc.pid, exited: proc.exited }
   }
+  _killProcessTree: (pid: number) => Promise<{ success: boolean; error?: string }> = killProcessTree
+  _killPid: (pid: number) => Promise<{ success: boolean; error?: string }> = (pid) => this.killPid(pid)
+  _logLifecycleRun: typeof logLifecycleRun = logLifecycleRun
+  _stopPollIntervalMs = STOP_POLL_INTERVAL_MS
+  _stopPollTimeoutMs = STOP_POLL_TIMEOUT_MS
+  _persistState = true
 
   // ── Startup ──────────────────────────────────────────────────────────────────
 
@@ -64,6 +99,8 @@ export class ProcessManager {
   // ── State persistence ────────────────────────────────────────────────────────
 
   private async loadState(): Promise<void> {
+    if (!this._persistState) return
+
     let content: string
     try {
       content = await readFile(STATE_PATH, "utf-8")
@@ -78,12 +115,12 @@ export class ProcessManager {
           console.log(`[ProcessManager] Pruned stale PID ${state.pid} for "${serviceId}"`)
           continue
         }
-        if (state.lifecycleState === "starting") {
-          // Restarted mid-startup — mark as failed
+        if (state.lifecycleState === "starting" || state.lifecycleState === "stopping") {
+          // Restarted mid-transition — keep the diagnostic visible.
           this.processes.set(serviceId, {
             ...state,
             lifecycleState: "failed",
-            lastError: "SourceManager restarted while service was starting",
+            lastError: `SourceManager restarted while service was ${state.lifecycleState}`,
           })
           this.portMap.set(state.port, serviceId)
         } else if (state.lifecycleState === "running") {
@@ -97,6 +134,8 @@ export class ProcessManager {
   }
 
   private async saveState(): Promise<void> {
+    if (!this._persistState) return
+
     const data: StateFile = { processes: Object.fromEntries(this.processes) }
     try {
       await mkdir(dirname(STATE_PATH), { recursive: true })
@@ -138,7 +177,7 @@ export class ProcessManager {
       const state = this.processes.get(existingServiceId)
       if (state) {
         console.log(`[ProcessManager] Auto-killing PID ${state.pid} ("${existingServiceId}") to free port ${port}`)
-        const result = await this.killPid(state.pid)
+        const result = await this._killPid(state.pid)
         this.processes.delete(existingServiceId)
         this.portMap.delete(port)
         await this.saveState()
@@ -149,7 +188,7 @@ export class ProcessManager {
     const externalPid = await this._findPidOnPort(port)
     if (externalPid) {
       console.log(`[ProcessManager] Auto-killing external PID ${externalPid} on port ${port}`)
-      const result = await this.killPid(externalPid)
+      const result = await this._killPid(externalPid)
       return { killed: result.success, previousPid: externalPid, error: result.error }
     }
 
@@ -164,11 +203,16 @@ export class ProcessManager {
         process.kill(pid, "SIGKILL")
         await new Promise((resolve) => setTimeout(resolve, 200))
       }
-      return { success: true }
+      if (this._isProcessAlive(pid) && process.platform === "win32") {
+        const treeResult = await this._killProcessTree(pid)
+        if (!treeResult.success) return treeResult
+      }
+      return { success: !this._isProcessAlive(pid), error: this._isProcessAlive(pid) ? "Process is still alive after kill attempts" : undefined }
     } catch (err) {
       const error = (err as NodeJS.ErrnoException).code === "ESRCH"
         ? "Process not found (already exited)"
         : (err as Error).message
+      if ((err as NodeJS.ErrnoException).code === "ESRCH") return { success: true, error }
       return { success: false, error }
     }
   }
@@ -178,7 +222,7 @@ export class ProcessManager {
   async start(repo: RepoConfig, service: ServiceConfig): Promise<StartResult> {
     // Idempotent for already-starting or running services
     const existing = this.processes.get(service.id)
-    if (existing?.lifecycleState === "starting" || existing?.lifecycleState === "running") {
+    if (existing?.lifecycleState === "starting" || existing?.lifecycleState === "running" || existing?.lifecycleState === "stopping") {
       return {
         success: true,
         message: `Service "${service.id}" is already ${existing.lifecycleState}`,
@@ -298,28 +342,180 @@ export class ProcessManager {
     }
   }
 
-  async stop(serviceId: string): Promise<StopResult> {
-    const state = this.processes.get(serviceId)
-    if (!state) {
-      return { success: true, alreadyStopped: true, message: `Service "${serviceId}" was not running` }
+  async stop(service: ServiceConfig, repo?: RepoConfig): Promise<StopResult> {
+    const serviceId = service.id
+    const runId = crypto.randomUUID()
+    const startedAt = new Date().toISOString()
+    const runStart = Date.now()
+    const steps: StepResult[] = []
+    const attempts: StopAttempt[] = []
+    const trackedState = this.processes.get(serviceId)
+    const trackedPid = trackedState?.pid
+    const repoId = repo?.id ?? trackedState?.repoId ?? "unknown"
+
+    const portPidBefore = await this._findPidOnPort(service.port)
+    addStep(steps, "inspect", "success", `tracked PID ${trackedPid ?? "none"}, port PID ${portPidBefore ?? "none"}`, runStart)
+
+    if (!trackedState && !portPidBefore) {
+      const health = await this._checkHealth(service)
+      if (health.status === "fail") {
+        const message = `Service "${serviceId}" was not running`
+        addStep(steps, "verify-stopped", "success", health.detail ?? "health check failed as expected", runStart)
+        await this.logStopRun({ runId, serviceId, repoId, startedAt, runStart, status: "skipped", reason: message, steps })
+        return { success: true, alreadyStopped: true, message, lifecycleState: "stopped" }
+      }
+
+      const diagnostics: StopDiagnostics = {
+        code: "SERVICE_STOP_VERIFICATION_FAILED",
+        serviceId,
+        port: service.port,
+        portPidBefore,
+        portPidAfter: null,
+        attempts,
+        message: `Health check still passes for "${serviceId}", but no PID was found on port ${service.port}`,
+      }
+      const message = diagnostics.message
+      this.processes.set(serviceId, {
+        serviceId,
+        repoId,
+        pid: 0,
+        port: service.port,
+        startedAt,
+        command: "<unknown healthy service>",
+        lifecycleState: "failed",
+        lastError: message,
+      })
+      await this.saveState()
+      addStep(steps, "verify-stopped", "failure", message, runStart)
+      await this.logStopRun({ runId, serviceId, repoId, startedAt, runStart, status: "failure", reason: message, steps, diagnostics })
+      return { success: false, alreadyStopped: false, message, lifecycleState: "failed", diagnostics }
     }
 
-    console.log(`[ProcessManager] Stopping "${serviceId}" (PID ${state.pid})`)
-    const result = await this.killPid(state.pid)
-    this.processes.delete(serviceId)
-    this.portMap.delete(state.port)
+    const state = trackedState ?? {
+      serviceId,
+      repoId,
+      pid: portPidBefore ?? 0,
+      port: service.port,
+      startedAt,
+      command: "<external port listener>",
+      lifecycleState: "stopping" as LifecycleState,
+    }
+
+    this.processes.set(serviceId, { ...state, lifecycleState: "stopping", lastError: undefined })
+    this.portMap.set(service.port, serviceId)
     await this.saveState()
+    addStep(steps, "mark-stopping", "success", `Lifecycle set to stopping for "${serviceId}"`, runStart)
 
-    if (!result.success) {
-      return { success: false, alreadyStopped: false, message: `Stop attempted but may have failed: ${result.error}` }
+    console.log(`[ProcessManager] Stopping "${serviceId}": tracked PID ${trackedPid ?? "none"}, port ${service.port} PID ${portPidBefore ?? "none"}`)
+
+    if (trackedPid) {
+      const result = await this._killPid(trackedPid)
+      attempts.push({ target: "tracked-pid", pid: trackedPid, success: result.success, error: result.error })
+      addStep(steps, "kill-tracked-pid", result.success ? "success" : "failure", result.success ? `Killed tracked PID ${trackedPid}` : `Failed to kill tracked PID ${trackedPid}: ${result.error}`, runStart)
+      console.log(`[ProcessManager] Kill tracked PID ${trackedPid} for "${serviceId}": ${result.success ? "success" : `failed: ${result.error}`}`)
+    } else {
+      addStep(steps, "kill-tracked-pid", "skipped", "No tracked PID", runStart)
     }
-    return { success: true, alreadyStopped: false, message: `Stopped "${serviceId}" (PID ${state.pid})` }
+
+    const portPidAfterTrackedKill = await this._findPidOnPort(service.port)
+    if (portPidAfterTrackedKill && portPidAfterTrackedKill !== trackedPid) {
+      const result = await this._killPid(portPidAfterTrackedKill)
+      attempts.push({ target: "port-pid", pid: portPidAfterTrackedKill, success: result.success, error: result.error })
+      addStep(steps, "kill-port-pid", result.success ? "success" : "failure", result.success ? `Killed port PID ${portPidAfterTrackedKill}` : `Failed to kill port PID ${portPidAfterTrackedKill}: ${result.error}`, runStart)
+      console.log(`[ProcessManager] Kill port PID ${portPidAfterTrackedKill} for "${serviceId}": ${result.success ? "success" : `failed: ${result.error}`}`)
+    } else if (portPidAfterTrackedKill) {
+      addStep(steps, "kill-port-pid", "skipped", `Port PID ${portPidAfterTrackedKill} already matched tracked PID`, runStart)
+    } else {
+      addStep(steps, "kill-port-pid", "skipped", "No remaining port PID", runStart)
+    }
+
+    const verification = await this.waitUntilStopped(service)
+    if (verification.stopped) {
+      this.processes.delete(serviceId)
+      this.portMap.delete(service.port)
+      await this.saveState()
+      const message = `Stopped "${serviceId}" on port ${service.port}`
+      addStep(steps, "verify-stopped", "success", "Health check failed and port is free", runStart)
+      await this.logStopRun({ runId, serviceId, repoId, startedAt, runStart, status: "success", reason: message, steps })
+      console.log(`[ProcessManager] ${message}`)
+      return { success: true, alreadyStopped: false, message, lifecycleState: "stopped" }
+    }
+
+    const portDetail = verification.portPid
+      ? `port ${service.port} is still listening on PID ${verification.portPid}`
+      : `health check still passes for ${service.healthUrl}`
+    const message = `Stop verification failed for "${serviceId}": ${portDetail}`
+    const diagnostics: StopDiagnostics = {
+      code: verification.portPid ? "SERVICE_STOP_PORT_STILL_LISTENING" : "SERVICE_STOP_VERIFICATION_FAILED",
+      serviceId,
+      port: service.port,
+      trackedPid,
+      portPidBefore,
+      portPidAfter: verification.portPid,
+      attempts,
+      message,
+    }
+
+    this.setLifecycleState(serviceId, "failed", { lastError: message })
+    await this.saveState()
+    addStep(steps, "verify-stopped", "failure", verification.health.detail ?? message, runStart)
+    await this.logStopRun({ runId, serviceId, repoId, startedAt, runStart, status: "failure", reason: message, steps, diagnostics })
+    console.error(`[ProcessManager] ${message}`)
+
+    return { success: false, alreadyStopped: false, message, lifecycleState: "failed", diagnostics }
   }
 
   async restart(repo: RepoConfig, service: ServiceConfig): Promise<StartResult> {
-    await this.stop(service.id)
+    await this.stop(service, repo)
     await new Promise((resolve) => setTimeout(resolve, 300))
     return this.start(repo, service)
+  }
+
+  private async waitUntilStopped(service: ServiceConfig): Promise<StopVerification> {
+    const deadline = Date.now() + this._stopPollTimeoutMs
+    let latest: StopVerification | null = null
+
+    while (Date.now() <= deadline) {
+      const portPid = await this._findPidOnPort(service.port)
+      const health = await this._checkHealth(service)
+      latest = { stopped: !portPid && health.status === "fail", portPid, health }
+      if (latest.stopped) return latest
+      await new Promise((resolve) => setTimeout(resolve, this._stopPollIntervalMs))
+    }
+
+    return latest ?? {
+      stopped: false,
+      portPid: await this._findPidOnPort(service.port),
+      health: await this._checkHealth(service),
+    }
+  }
+
+  private async logStopRun(args: {
+    runId: string
+    serviceId: string
+    repoId: string
+    startedAt: string
+    runStart: number
+    status: "success" | "failure" | "skipped"
+    reason: string
+    steps: StepResult[]
+    diagnostics?: StopDiagnostics
+  }): Promise<void> {
+    await this._logLifecycleRun({
+      kind: "lifecycle",
+      action: "stop",
+      runId: args.runId,
+      serviceId: args.serviceId,
+      repoId: args.repoId,
+      startedAt: args.startedAt,
+      durationMs: Date.now() - args.runStart,
+      status: args.status,
+      reason: args.reason,
+      steps: args.steps,
+      diagnostics: args.diagnostics as Record<string, unknown> | undefined,
+    }).catch((err) => {
+      console.warn(`[ProcessManager] Could not write stop lifecycle log for "${args.serviceId}": ${(err as Error).message}`)
+    })
   }
 
   // ── Background health poll ────────────────────────────────────────────────────
@@ -399,6 +595,36 @@ function isProcessAlive(pid: number): boolean {
     return true
   } catch {
     return false
+  }
+}
+
+function addStep(
+  steps: StepResult[],
+  step: string,
+  status: StepResult["status"],
+  message: string,
+  runStart: number,
+): void {
+  steps.push({ step, status, message, durationMs: Date.now() - runStart })
+}
+
+async function killProcessTree(pid: number): Promise<{ success: boolean; error?: string }> {
+  if (process.platform !== "win32") return { success: false, error: "Process tree kill is only available on Windows" }
+
+  try {
+    const proc = Bun.spawn(
+      ["taskkill", "/PID", String(pid), "/T", "/F"],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    if (code === 0) return { success: true }
+    return { success: false, error: stderr.trim() || stdout.trim() || `taskkill exited with code ${code}` }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 

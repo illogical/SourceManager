@@ -128,8 +128,8 @@ describe("POST /v1/config/apply", () => {
       errors: [{ path: "server.port", message: "Must be an integer between 1 and 65535" }],
       warnings: [],
     }
-    const { applyEditableConfig } = await import("../../../src/services/configEditor")
-    vi.mocked(applyEditableConfig).mockRejectedValueOnce(new ValidationError(validationFailed))
+    const configEditor = await import("../../../src/services/configEditor")
+    vi.spyOn(configEditor, "applyEditableConfig").mockRejectedValueOnce(new ValidationError(validationFailed))
 
     const app = await buildApp()
     const res = await app.handle(

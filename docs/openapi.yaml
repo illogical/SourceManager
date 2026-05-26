@@ -148,7 +148,7 @@ components:
 
     LifecycleState:
       type: string
-      enum: [starting, running, stopped, failed]
+      enum: [starting, running, stopping, stopped, failed]
       example: running
 
     ServiceLifecycle:

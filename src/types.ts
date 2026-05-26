@@ -47,7 +47,7 @@ export interface AppConfig {
 
 // ── Lifecycle state machine ───────────────────────────────────────────────────
 
-export type LifecycleState = "starting" | "running" | "stopped" | "failed"
+export type LifecycleState = "starting" | "running" | "stopping" | "stopped" | "failed"
 
 export interface ServiceProcessState {
   serviceId: string
@@ -120,6 +120,20 @@ export interface RunReport {
   restartRun: RestartRunResult
   healthStatus: "pass" | "fail" | "skipped"
   steps: StepResult[]
+}
+
+export interface LifecycleRunReport {
+  kind: "lifecycle"
+  action: "start" | "stop" | "restart"
+  runId: string
+  serviceId: string
+  repoId: string
+  startedAt: string
+  durationMs: number
+  status: "success" | "failure" | "skipped"
+  reason: string
+  steps: StepResult[]
+  diagnostics?: Record<string, unknown>
 }
 
 export type InstallMode = "auto" | "always" | "never"
