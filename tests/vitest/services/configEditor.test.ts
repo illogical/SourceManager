@@ -13,12 +13,12 @@ import type { EditableConfig } from "../../../src/types"
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const minimalConfig = {
-  server: { port: 17106, frontendPort: 17116, token: "secret-token", allowedIps: [] },
+  server: { port: 17106, frontendPort: 17116, token: "legacy-secret-token", allowedIps: [] },
   repos: [
     {
       id: "my-repo",
       displayName: "My Repo",
-      repoPath: "/dev/my-repo",
+      repoPath: "my-repo",
       defaultBranch: "main",
       services: [
         {
@@ -51,7 +51,6 @@ describe("readEditableConfig", () => {
     const path = makeTmp()
     const result = readEditableConfig(path)
     expect(result.server).not.toHaveProperty("token")
-    expect(result.server.port).toBe(17106)
     expect(result.server.frontendPort).toBe(17116)
   })
 
@@ -82,12 +81,12 @@ describe("readEditableConfig", () => {
 describe("validateEditableConfig", () => {
   function makeValid(): EditableConfig {
     return {
-      server: { port: 17106, frontendPort: 17116, allowedIps: [] },
+      server: { frontendPort: 17116, allowedIps: [] },
       repos: [
         {
           id: "my-repo",
           displayName: "My Repo",
-          repoPath: "/dev/my-repo",
+          repoPath: "my-repo",
           defaultBranch: "main",
           services: [
             {
@@ -112,12 +111,12 @@ describe("validateEditableConfig", () => {
     expect(validateEditableConfig(makeValid()).valid).toBe(true)
   })
 
-  it("rejects invalid server port", () => {
+  it("rejects an absolute repo path", () => {
     const cfg = makeValid()
-    cfg.server.port = 0
+    cfg.repos[0].repoPath = "/dev/my-repo"
     const result = validateEditableConfig(cfg)
     expect(result.valid).toBe(false)
-    expect(result.errors.some((e) => e.path === "server.port")).toBe(true)
+    expect(result.errors.some((e) => e.path === "repos[0].repoPath")).toBe(true)
   })
 
   it("rejects invalid frontendPort", () => {
@@ -225,12 +224,12 @@ describe("validateEditableConfig", () => {
 describe("diffEditableConfig", () => {
   function makeEditable(): EditableConfig {
     return {
-      server: { port: 17106, frontendPort: 17116, allowedIps: [] },
+      server: { frontendPort: 17116, allowedIps: [] },
       repos: [
         {
           id: "my-repo",
           displayName: "My Repo",
-          repoPath: "/dev/my-repo",
+          repoPath: "my-repo",
           defaultBranch: "main",
           services: [
             {
@@ -257,15 +256,15 @@ describe("diffEditableConfig", () => {
     expect(diff.changeCount).toBe(0)
   })
 
-  it("detects a port change", () => {
+  it("detects a frontend port change", () => {
     const a = makeEditable()
     const b = makeEditable()
-    b.server.port = 9000
+    b.server.frontendPort = 5173
     const diff = diffEditableConfig(a, b)
     expect(diff.changeCount).toBe(1)
-    expect(diff.changes[0].path).toBe("server.port")
-    expect(diff.changes[0].oldValue).toBe(17106)
-    expect(diff.changes[0].newValue).toBe(9000)
+    expect(diff.changes[0].path).toBe("server.frontendPort")
+    expect(diff.changes[0].oldValue).toBe(17116)
+    expect(diff.changes[0].newValue).toBe(5173)
   })
 
   it("detects a repo displayName change", () => {
@@ -290,12 +289,12 @@ describe("diffEditableConfig", () => {
 describe("applyEditableConfig", () => {
   function makeValid(): EditableConfig {
     return {
-      server: { port: 17106, frontendPort: 17116, allowedIps: [] },
+      server: { frontendPort: 17116, allowedIps: [] },
       repos: [
         {
           id: "my-repo",
           displayName: "My Repo",
-          repoPath: "/dev/my-repo",
+          repoPath: "my-repo",
           defaultBranch: "main",
           services: [
             {
@@ -316,7 +315,7 @@ describe("applyEditableConfig", () => {
     }
   }
 
-  it("writes updated fields and preserves token", async () => {
+  it("writes updated fields and removes legacy environment-owned fields", async () => {
     const path = makeTmp()
     const mockInvalidate = vi.fn()
 
@@ -327,7 +326,8 @@ describe("applyEditableConfig", () => {
     await applyEditableConfig(proposed, path, mockInvalidate)
 
     const written = JSON.parse(readFileSync(path, "utf-8"))
-    expect(written.server.token).toBe("secret-token")      // token preserved
+    expect(written.server.token).toBeUndefined()
+    expect(written.server.port).toBeUndefined()
     expect(written.repos[0].id).toBe("my-repo")            // id preserved
     expect(written.repos[0].displayName).toBe("Updated Repo")
     expect(written.repos[0].services[0].port).toBe(4000)
@@ -340,7 +340,7 @@ describe("applyEditableConfig", () => {
     const mockInvalidate = vi.fn()
 
     const proposed = makeValid()
-    proposed.server.port = 0 // invalid
+    proposed.repos[0].repoPath = "../outside"
 
     await expect(applyEditableConfig(proposed, path, mockInvalidate)).rejects.toMatchObject({
       name: "ValidationError",

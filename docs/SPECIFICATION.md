@@ -52,10 +52,10 @@ related: []
 
 - Threats: unauthorized repo updates, arbitrary command execution, attacks from non-allowlisted networks.
 - Controls:
-  - Config defines a single global `token` and optional CIDR-based IP allowlist (global or per-service).
+  - Environment config defines a single global token; `projects.json` defines optional CIDR-based IP allowlists.
   - API checks caller token via `X-DevServer-Token` header and rejects unknown repos/services.
   - No shell exec path exposed; all git and install/restart commands use `Bun.spawn()` with arg arrays (no user-supplied script, no shell string interpolation).
-  - Repos must reside under approved root directories; `projects.json` only lists allowed paths.
+  - Repos must reside under `SOURCEMANAGER_WORKSPACE_PATH`; `projects.json` lists relative paths only.
   - Branch names validated against `/^[\w./-]+$/` before use in git commands.
 
 ## Config schema (`projects.json`)
@@ -63,15 +63,14 @@ related: []
 ```json
 {
   "server": {
-    "port": 17106,
-    "token": "your-secret-token",
+    "frontendPort": 17116,
     "allowedIps": []
   },
   "repos": [
     {
       "id": "my-app",
       "displayName": "My Application",
-      "repoPath": "C:\\LocalDev\\Projects\\myapp",
+      "repoPath": "myapp",
       "defaultBranch": "main",
       "services": [
         {
@@ -96,9 +95,12 @@ related: []
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `server.port` | Yes | — | Port this API listens on |
-| `server.token` | Yes | — | Global API auth token |
+| `server.frontendPort` | No | `5173` | Local Vite development port |
 | `server.allowedIps` | No | `[]` | Global CIDR IP allowlist (empty = all IPs allowed) |
+
+Required runtime environment values are `SOURCEMANAGER_PORT`,
+`SOURCEMANAGER_TOKEN`, and `SOURCEMANAGER_WORKSPACE_PATH`. Docker Compose also
+uses `SOURCEMANAGER_HOST_WORKSPACE_PATH` as the bind-mount source.
 
 ### Repo fields
 
@@ -106,7 +108,7 @@ related: []
 |-------|----------|-------------|
 | `id` | Yes | Unique repo identifier (slug: `[a-z0-9-]+`) |
 | `displayName` | Yes | Human-readable repo name |
-| `repoPath` | Yes | Absolute path to the git repository |
+| `repoPath` | Yes | Path relative to `SOURCEMANAGER_WORKSPACE_PATH`; absolute paths and `..` traversal are rejected |
 | `defaultBranch` | Yes | Branch to pull when none specified in update call |
 | `services` | Yes | Non-empty array of service entries |
 
@@ -249,7 +251,7 @@ Each step emits `{ step, status: "pending"|"success"|"failure"|"skipped", messag
 
 - Stack: Bun + TypeScript + Elysia (v1.3+) for lightweight Windows-friendly tooling.
 - OpenAPI spec auto-generated from Elysia route type definitions via `@elysiajs/swagger`.
-- Config read synchronously at startup; cached in memory. Restart API to reload config.
+- Environment and JSON config are merged synchronously at startup and cached in memory. Restart the API to reload environment values.
 - Git operations via `Bun.spawn(["git", ...args], { cwd: repoPath })` — never shell string interpolation.
 - `data/projects.json` is gitignored; `data/projects.example.json` is committed as a template.
 - Old `projects[]` format detected at startup → `process.exit(1)` with migration message.

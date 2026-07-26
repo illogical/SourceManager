@@ -7,35 +7,49 @@ import { fileURLToPath } from "node:url"
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const configPath = resolve(__dirname, "..", "data", "projects.json")
 
-function readServerPorts(): { backendPort: number; frontendPort: number } {
-  if (!existsSync(configPath)) return { backendPort: 17106, frontendPort: 5173 }
+function readFrontendPort(): number {
+  if (!existsSync(configPath)) return 5173
 
   const raw = JSON.parse(readFileSync(configPath, "utf-8")) as {
-    server?: { port?: unknown; frontendPort?: unknown }
+    server?: { frontendPort?: unknown }
   }
 
-  const backendPort = typeof raw.server?.port === "number" ? raw.server.port : 17106
-  const frontendPort = typeof raw.server?.frontendPort === "number" ? raw.server.frontendPort : 5173
-  return { backendPort, frontendPort }
+  return typeof raw.server?.frontendPort === "number" ? raw.server.frontendPort : 5173
 }
 
-const { backendPort, frontendPort } = readServerPorts()
-const backendUrl = `http://localhost:${backendPort}`
+function readBackendPort(): number {
+  const raw = process.env.SOURCEMANAGER_PORT?.trim()
+  if (!raw || !/^\d+$/.test(raw)) {
+    throw new Error("SOURCEMANAGER_PORT must be set to an integer between 1 and 65535")
+  }
+  const port = Number(raw)
+  if (port < 1 || port > 65535) {
+    throw new Error("SOURCEMANAGER_PORT must be set to an integer between 1 and 65535")
+  }
+  return port
+}
 
-export default defineConfig({
-  root: "frontend",
-  plugins: [react()],
-  build: {
-    outDir: "dist",
-    emptyOutDir: true,
-  },
-  server: {
-    port: frontendPort,
-    strictPort: true,
-    proxy: {
-      "/v1": backendUrl,
-      "/health": backendUrl,
-      "/swagger": backendUrl,
+export default defineConfig(({ command }) => {
+  const frontendPort = readFrontendPort()
+  const backendUrl = command === "serve"
+    ? `http://localhost:${readBackendPort()}`
+    : "http://localhost"
+
+  return {
+    root: "frontend",
+    plugins: [react()],
+    build: {
+      outDir: "dist",
+      emptyOutDir: true,
     },
-  },
+    server: {
+      port: frontendPort,
+      strictPort: true,
+      proxy: {
+        "/v1": backendUrl,
+        "/health": backendUrl,
+        "/swagger": backendUrl,
+      },
+    },
+  }
 })

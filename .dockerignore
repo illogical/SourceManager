@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env*
+.DS_Store
+node_modules
+frontend/dist
+data/logs
+data/projects.json
+data/state.json
+coverage
+docs
+tests

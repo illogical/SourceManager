@@ -18,12 +18,13 @@ function validService(overrides: Partial<{ id: string; port: number; healthUrl: 
 
 function validConfig(): AppConfig {
   return {
+    workspacePath: "/workspace",
     server: { port: 17106, token: "test-token", allowedIps: [] },
     repos: [
       {
         id: "my-app",
         displayName: "My App",
-        repoPath: "/dev/my-app",
+        repoPath: "my-app",
         defaultBranch: "main",
         services: [validService()],
       },
@@ -99,7 +100,7 @@ describe("validateConfig — service validation", () => {
     cfg.repos.push({
       id: "second-repo",
       displayName: "Second",
-      repoPath: "/dev/second",
+      repoPath: "second",
       defaultBranch: "main",
       services: [validService({ port: 4000, healthUrl: "http://localhost:4000/h" })], // same id
     })

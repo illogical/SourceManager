@@ -1,5 +1,10 @@
 import { describe, it, expect } from "bun:test"
-import { validateConfig, ConfigError } from "../src/config"
+import {
+  loadEnvironmentConfig,
+  resolveRepoPaths,
+  validateConfig,
+  ConfigError,
+} from "../src/config"
 import type { AppConfig } from "../src/types"
 
 function validService(overrides?: object) {
@@ -19,6 +24,7 @@ function validService(overrides?: object) {
 
 function validConfig(): AppConfig {
   return {
+    workspacePath: "/workspace",
     server: {
       port: 17106,
       token: "test-token",
@@ -28,7 +34,7 @@ function validConfig(): AppConfig {
       {
         id: "my-app",
         displayName: "My App",
-        repoPath: "/dev/my-app",
+        repoPath: "my-app",
         defaultBranch: "main",
         services: [validService()],
       },
@@ -161,7 +167,7 @@ describe("validateConfig", () => {
       cfg.repos.push({
         id: "second-repo",
         displayName: "Second",
-        repoPath: "/dev/second-repo",
+        repoPath: "second-repo",
         defaultBranch: "main",
         services: [validService({ port: 4000, healthUrl: "http://localhost:4000/health" })], // same service id "my-app-web"
       })
@@ -173,7 +179,7 @@ describe("validateConfig", () => {
       cfg.repos.push({
         id: "my-app",
         displayName: "Duplicate",
-        repoPath: "/dev/other",
+        repoPath: "other",
         defaultBranch: "main",
         services: [validService({ id: "other-svc", port: 4000, healthUrl: "http://localhost:4000/health" })],
       })
@@ -249,7 +255,7 @@ describe("validateConfig", () => {
     cfg.repos.push({
       id: "second-repo",
       displayName: "Second",
-      repoPath: "/dev/second",
+      repoPath: "second",
       defaultBranch: "develop",
       services: [
         validService({ id: "second-api", port: 4000, healthUrl: "http://localhost:4000/health" }),
@@ -259,5 +265,72 @@ describe("validateConfig", () => {
     expect(() => validateConfig(cfg)).not.toThrow()
     expect(cfg.repos).toHaveLength(2)
     expect(cfg.repos[1].services).toHaveLength(2)
+  })
+})
+
+describe("environment configuration and repo resolution", () => {
+  it("loads required deployment values", () => {
+    const result = loadEnvironmentConfig({
+      SOURCEMANAGER_PORT: "18080",
+      SOURCEMANAGER_TOKEN: "environment-token",
+      SOURCEMANAGER_WORKSPACE_PATH: "/workspace/projects",
+    })
+
+    expect(result).toEqual({
+      port: 18080,
+      token: "environment-token",
+      workspacePath: "/workspace/projects",
+    })
+  })
+
+  it("rejects missing and malformed deployment values", () => {
+    expect(() => loadEnvironmentConfig({})).toThrow(ConfigError)
+    expect(() => loadEnvironmentConfig({
+      SOURCEMANAGER_PORT: "17.5",
+      SOURCEMANAGER_TOKEN: "token",
+      SOURCEMANAGER_WORKSPACE_PATH: "/workspace",
+    })).toThrow(ConfigError)
+    expect(() => loadEnvironmentConfig({
+      SOURCEMANAGER_PORT: "70000",
+      SOURCEMANAGER_TOKEN: "token",
+      SOURCEMANAGER_WORKSPACE_PATH: "/workspace",
+    })).toThrow(ConfigError)
+    expect(() => loadEnvironmentConfig({
+      SOURCEMANAGER_PORT: "17106",
+      SOURCEMANAGER_TOKEN: " ",
+      SOURCEMANAGER_WORKSPACE_PATH: "/workspace",
+    })).toThrow(ConfigError)
+    expect(() => loadEnvironmentConfig({
+      SOURCEMANAGER_PORT: "17106",
+      SOURCEMANAGER_TOKEN: "token",
+      SOURCEMANAGER_WORKSPACE_PATH: "relative/workspace",
+    })).toThrow(ConfigError)
+  })
+
+  it("resolves the same repo path beneath different workspaces", () => {
+    const local = validConfig()
+    local.workspacePath = "/Users/example/projects"
+    const docker = validConfig()
+    docker.workspacePath = "/workspace/projects"
+
+    resolveRepoPaths(local)
+    resolveRepoPaths(docker)
+
+    expect(local.repos[0].repoPath).toBe("/Users/example/projects/my-app")
+    expect(docker.repos[0].repoPath).toBe("/workspace/projects/my-app")
+  })
+
+  it("rejects absolute and escaping repo paths", () => {
+    const absolute = validConfig()
+    absolute.repos[0].repoPath = "/outside/my-app"
+    expect(() => validateConfig(absolute)).toThrow(ConfigError)
+
+    const windowsAbsolute = validConfig()
+    windowsAbsolute.repos[0].repoPath = "C:\\outside\\my-app"
+    expect(() => validateConfig(windowsAbsolute)).toThrow(ConfigError)
+
+    const traversal = validConfig()
+    traversal.repos[0].repoPath = "../my-app"
+    expect(() => validateConfig(traversal)).toThrow(ConfigError)
   })
 })

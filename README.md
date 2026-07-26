@@ -37,27 +37,41 @@ An OpenAPI spec is served live at `/swagger` for use with agent scripts and tool
 bun install
 ```
 
-**2. Create your config**
+**2. Create your configuration**
 
 ```bash
 cp data/projects.example.json data/projects.json
+cp .env.example .env
+cp .env.local.example .env.local
 ```
 
-Edit `data/projects.json`:
+Set the shared runtime values in `.env`:
+
+```dotenv
+SOURCEMANAGER_PORT=17106
+SOURCEMANAGER_TOKEN=replace-with-a-long-random-token
+SOURCEMANAGER_HOST_WORKSPACE_PATH=/Users/your-name/projects
+```
+
+`.env.local` maps the local runtime workspace to that host directory:
+
+```dotenv
+SOURCEMANAGER_WORKSPACE_PATH=${SOURCEMANAGER_HOST_WORKSPACE_PATH}
+```
+
+Edit `data/projects.json`. Repository paths are relative to the workspace:
 
 ```json
 {
   "server": {
-    "port": 17106,
     "frontendPort": 17116,
-    "token": "your-strong-secret-token",
     "allowedIps": []
   },
   "repos": [
     {
       "id": "my-app",
       "displayName": "My Application",
-      "repoPath": "C:\\LocalDev\\Projects\\my-app",
+      "repoPath": "my-app",
       "defaultBranch": "main",
       "services": [
         {
@@ -87,10 +101,14 @@ This starts two processes concurrently:
 
 | Process | Command | URL |
 |---------|---------|-----|
-| API (Bun `--watch`) | `bun run dev:backend` | `http://localhost:17106` |
+| API (Bun `--watch`) | `bun run dev:backend` | `http://localhost:<SOURCEMANAGER_PORT>` |
 | Frontend (Vite HMR) | `bun run dev:frontend` | `http://localhost:<server.frontendPort>` (`5173` if omitted) |
 
-Open the configured frontend URL in your browser. Vite reads `server.frontendPort` from `data/projects.json` and proxies all `/v1/*`, `/health`, and `/swagger` requests to `server.port`, so everything runs on a single origin — no CORS configuration needed. Both servers support hot-reload: Vite HMR for the React frontend and Bun `--watch` for the API. The committed example uses `17116` to avoid the common `5173` collision.
+Open the configured frontend URL in your browser. Bun automatically loads
+`.env` and then `.env.local`. Vite reads `server.frontendPort` from
+`data/projects.json` and proxies `/v1/*`, `/health`, and `/swagger` to
+`SOURCEMANAGER_PORT`, so the backend port is defined once. Both servers support
+hot reload.
 
 **4. Build and run in production**
 
@@ -102,7 +120,8 @@ bun run frontend:build
 bun run start
 ```
 
-After building, `bun run start` serves everything on `http://localhost:17106`:
+After building, `bun run start` serves everything on the configured
+`SOURCEMANAGER_PORT`:
 - `/` → React dashboard (static files from `frontend/dist/`)
 - `/v1/*` → authenticated API
 - `/swagger` → interactive OpenAPI docs
@@ -114,6 +133,134 @@ After building, `bun run start` serves everything on `http://localhost:17106`:
 > to pull new code, the changed source files trigger an automatic restart — no explicit
 > `/restart` API call is needed. Use `restartMode: "never"` when updating SourceManager
 > itself in dev mode.
+
+---
+
+## Running with Docker Desktop
+
+The included `Dockerfile` builds the React dashboard and runs the API in a
+Debian-based Bun container. `compose.yaml` persists SourceManager state, mounts
+the repositories it manages, and uses `restart: unless-stopped` so the container
+starts again whenever Docker Desktop starts.
+
+### 1. Create the runtime configuration
+
+The application configuration file is `data/projects.json` (plural). Create it
+from the example:
+
+```powershell
+Copy-Item data/projects.example.json data/projects.json
+Copy-Item .env.example .env
+Copy-Item .env.docker.example .env.docker
+```
+
+On macOS or Linux, use `cp` instead:
+
+```bash
+cp data/projects.example.json data/projects.json
+cp .env.example .env
+cp .env.docker.example .env.docker
+```
+
+Edit `.env`:
+
+```dotenv
+SOURCEMANAGER_PORT=17106
+SOURCEMANAGER_TOKEN=replace-with-a-long-random-token
+SOURCEMANAGER_HOST_WORKSPACE_PATH=C:/LocalDev/Projects
+```
+
+`SOURCEMANAGER_HOST_WORKSPACE_PATH` is the absolute host directory containing all managed
+repositories. A macOS value could be `/Users/your-name/projects`. Docker mounts
+that directory at `/workspace/projects` inside the container.
+
+`.env.docker` supplies the container-specific runtime path:
+
+```dotenv
+SOURCEMANAGER_WORKSPACE_PATH=/workspace/projects
+```
+
+The same relative `repoPath` values work locally and in Docker:
+
+```json
+{
+  "server": {
+    "frontendPort": 17116,
+    "allowedIps": []
+  },
+  "repos": [
+    {
+      "id": "my-app",
+      "displayName": "My Application",
+      "repoPath": "my-app",
+      "defaultBranch": "main",
+      "services": [
+        {
+          "id": "my-app-web",
+          "displayName": "Web Server",
+          "port": 3000,
+          "healthUrl": "http://localhost:3000/health",
+          "healthMode": "ping",
+          "packageManager": "auto",
+          "scriptName": "dev",
+          "allowedIps": [],
+          "tags": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+The real `.env`, `.env.local`, and `.env.docker` files are ignored by Git.
+The API port, token, and runtime workspace are required environment values.
+Legacy `server.port` and `server.token` JSON fields are ignored and are removed
+the next time Settings saves the file.
+
+If you use a different API port, set the same `SOURCEMANAGER_PORT` in `.env`;
+Compose uses it for both the container and host port. If a managed service must
+be reachable from the host, uncomment or add its port under `ports` in
+`compose.yaml`, for example:
+
+```yaml
+ports:
+  - "${SOURCEMANAGER_PORT}:${SOURCEMANAGER_PORT}"
+  - "3000:3000"
+```
+
+### 2. Build and start
+
+```bash
+docker compose --env-file .env --env-file .env.docker up -d --build
+docker compose --env-file .env --env-file .env.docker ps
+docker compose --env-file .env --env-file .env.docker logs -f sourcemanager
+```
+
+Open `http://localhost:17106` (or your configured port). Check the health
+endpoint with:
+
+```bash
+curl http://localhost:17106/health
+```
+
+### 3. Start automatically with Docker Desktop
+
+In Docker Desktop, enable **Settings → General → Start Docker Desktop when you
+sign in**. The Compose service already has `restart: unless-stopped`, so after
+the first `docker compose up -d`, Docker restarts it whenever Docker Desktop
+starts.
+
+Important behavior:
+
+- `docker compose stop` deliberately marks the container as stopped, so it will
+  not auto-start again. Run `docker compose up -d` to re-enable it.
+- `docker compose down` removes the container. Run `docker compose up -d` to
+  recreate it; `data/` and the managed repositories remain on the host.
+- SourceManager starts managed services **inside this container**, not directly
+  on the Windows/macOS host. Their repository paths and health URLs must be
+  valid from inside the container.
+- After changing `.env` or `data/projects.json`, recreate the container with
+  `docker compose up -d --force-recreate`.
 
 ---
 
@@ -249,11 +396,13 @@ All fields are optional. Defaults: branch from repo config, `installMode=auto`, 
 
 The Settings page (gear icon) provides a full GUI for editing `data/projects.json`. The config is also editable via API:
 
-**GET `/v1/config`** — returns an editable snapshot (no `token` field).
+**GET `/v1/config`** — returns JSON-owned editable settings plus a read-only
+`runtime` summary containing `port`, `workspacePath`, and `tokenConfigured`.
+The token value is never returned.
 
 **POST `/v1/config/validate`** — validates proposed edits without writing:
 ```json
-{ "config": { "server": { "port": 17106, ... }, "repos": [ ... ] } }
+{ "config": { "server": { "frontendPort": 17116, ... }, "repos": [ ... ] } }
 ```
 Returns `{ "validation": { "valid": true, "errors": [], "warnings": [] }, "diff": { "changeCount": 2, "changes": [...] } }`.
 
@@ -261,11 +410,13 @@ Returns `{ "validation": { "valid": true, "errors": [], "warnings": [] }, "diff"
 Returns `{ "success": true, "changeCount": 2 }` or `422` with validation errors.
 
 **Security guarantees:**
-- `server.token` is never sent to the client and is always preserved from disk.
+- `SOURCEMANAGER_TOKEN` is never sent to the client.
+- Environment-owned port and workspace values cannot be changed by the config API.
+- Repository paths must be relative and cannot escape the configured workspace.
 - `repo.id` and `service.id` are immutable — proposed IDs are ignored; original disk IDs are kept.
 - Shell metacharacters (`;`, `&`, `|`, etc.) are rejected in `installCommand`.
 
-**After saving**, a restart is required if `server.port` or `server.frontendPort` changed.
+**After saving**, restart the Vite development process if `server.frontendPort` changed.
 
 ---
 
@@ -275,10 +426,17 @@ Returns `{ "success": true, "changeCount": 2 }` or `422` with validation errors.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `port` | Yes | Backend API port |
 | `frontendPort` | No | Vite dev server port for `bun run dev:frontend` (default: `5173`) |
-| `token` | Yes | Shared API token expected in `X-DevServer-Token` |
 | `allowedIps` | No | CIDR IP allowlist for the API |
+
+Runtime values are configured in environment files:
+
+| Variable | Description |
+|----------|-------------|
+| `SOURCEMANAGER_PORT` | API and production dashboard port |
+| `SOURCEMANAGER_TOKEN` | Shared token expected in `X-DevServer-Token` |
+| `SOURCEMANAGER_HOST_WORKSPACE_PATH` | Absolute host directory mounted by Docker |
+| `SOURCEMANAGER_WORKSPACE_PATH` | Absolute workspace visible to the running process |
 
 ### Repo fields
 
@@ -286,7 +444,7 @@ Returns `{ "success": true, "changeCount": 2 }` or `422` with validation errors.
 |-------|----------|-------------|
 | `id` | Yes | Unique repo identifier (slug: `[a-z0-9-]+`) |
 | `displayName` | Yes | Human-readable repo name |
-| `repoPath` | Yes | Absolute path to the git repository |
+| `repoPath` | Yes | Path relative to `SOURCEMANAGER_WORKSPACE_PATH`; absolute and escaping paths are rejected |
 | `defaultBranch` | Yes | Branch to pull when none specified |
 | `services` | Yes | Non-empty array of service entries |
 
@@ -415,7 +573,7 @@ src/
 
 frontend/
   index.html            Vite HTML entry point
-  vite.config.ts        Vite config (dev port/proxy from data/projects.json, builds to frontend/dist/)
+  vite.config.ts        Vite config (dev UI port from JSON, API proxy port from env)
   vitest.config.ts      Vitest config for frontend tests (jsdom)
   tsconfig.json         Frontend TypeScript config
   src/

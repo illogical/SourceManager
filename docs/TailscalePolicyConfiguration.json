@@ -1,0 +1,148 @@
+{
+	// Consolidated tailnet policy: existing segmentation + SourceManager SO-6C Tailscale Services.
+	// Apply via Admin Console → Access controls, or GitOps.
+	//
+	// Before rollout:
+	//   1. Define each svc:* Service in Admin Console → Services (TCP endpoint tcp:443).
+	//   2. Authenticate the Windows dev machine with tag:dev-service-host (auth key recommended).
+	//   3. SourceManager (or manual tailscale serve) advertises each Service host.
+	//
+	// Service map (HTTPS :443 → local dev ports):
+	//   svc:sourcemanager     → http://127.0.0.1:17116  (SourceManager web)
+	//   svc:sourcemanager-api → http://127.0.0.1:17106  (SourceManager API)
+	//   svc:devplanner        → http://127.0.0.1:5173   (DevPlanner web)
+	//   svc:devplanner-api    → http://127.0.0.1:17103  (DevPlanner API)
+	//   svc:lmapi             → http://127.0.0.1:3111   (LMApi)
+	//   svc:memory            → http://127.0.0.1:17107  (MemoryApi)
+	//   svc:lmeval            → http://127.0.0.1:5177   (LMEval web)
+	//   svc:lmeval-api        → http://127.0.0.1:3200   (LMEval API)
+
+	"tagOwners": {
+		"tag:server":           ["autogroup:admin"],
+		"tag:service":          ["autogroup:admin"],
+		"tag:client":           ["autogroup:admin"],
+		"tag:monitoring":       ["autogroup:admin"],
+		// Dedicated tag for the Windows dev machine that hosts Tailscale Services via SourceManager.
+		// Service hosts cannot use user-based authentication; assign this tag at login (auth key).
+		"tag:dev-service-host": ["autogroup:admin"],
+	},
+
+	// Legacy ACLs — unchanged device-to-device rules for tagged infrastructure.
+	"acls": [
+		{
+			"action": "accept",
+			"src":    ["autogroup:admin"],
+			"dst":    ["*:*"],
+		},
+		{
+			"action": "accept",
+			"src":    ["tag:service"],
+			"dst": [
+				"tag:server:80",
+				"tag:server:443",
+			],
+		},
+		{
+			"action": "accept",
+			"src":    ["tag:service"],
+			"dst":    ["tag:service:*"],
+		},
+		{
+			"action": "accept",
+			"src":    ["tag:monitoring"],
+			"dst": [
+				"tag:server:*",
+				"tag:service:*",
+			],
+		},
+		{
+			"action": "accept",
+			"src":    ["tag:client"],
+			"dst": [
+				"tag:service:80",
+				"tag:service:443",
+			],
+		},
+	],
+
+	// Tailscale Services access — required for svc:* MagicDNS hostnames (SO-6C).
+	// ACLs above do not grant access to Tailscale Services; grants are separate.
+	"grants": [
+		{
+			"src": ["autogroup:admin"],
+			"dst": [
+				"svc:sourcemanager",
+				"svc:sourcemanager-api",
+				"svc:devplanner",
+				"svc:devplanner-api",
+				"svc:lmapi",
+				"svc:memory",
+				"svc:lmeval",
+				"svc:lmeval-api",
+			],
+			"ip": ["443"],
+		},
+		{
+			"src": ["tag:client"],
+			"dst": [
+				"svc:sourcemanager",
+				"svc:sourcemanager-api",
+				"svc:devplanner",
+				"svc:devplanner-api",
+				"svc:lmapi",
+				"svc:memory",
+				"svc:lmeval",
+				"svc:lmeval-api",
+			],
+			"ip": ["443"],
+		},
+		{
+			"src": ["tag:monitoring"],
+			"dst": [
+				"svc:sourcemanager",
+				"svc:sourcemanager-api",
+				"svc:devplanner",
+				"svc:devplanner-api",
+				"svc:lmapi",
+				"svc:memory",
+				"svc:lmeval",
+				"svc:lmeval-api",
+			],
+			"ip": ["443"],
+		},
+	],
+
+	"ssh": [
+		{
+			"action": "accept",
+			"src":    ["autogroup:admin"],
+			"dst":    ["tag:server"],
+			"users":  ["autogroup:nonroot", "root"],
+		},
+		{
+			"action": "accept",
+			"src":    ["tag:monitoring"],
+			"dst":    ["tag:server"],
+			"users":  ["autogroup:nonroot"],
+		},
+	],
+
+	"autoApprovers": {
+		"routes": {
+			"192.168.1.0/24": ["tag:server"],
+			"10.0.0.0/24":    ["tag:service"],
+		},
+		// Auto-approve Service-host advertisements from the SourceManager dev machine.
+		// Policies apply on first advertisement; re-advertise after policy changes if needed.
+		"services": {
+			"svc:sourcemanager":     ["tag:dev-service-host"],
+			"svc:sourcemanager-api": ["tag:dev-service-host"],
+			"svc:devplanner":        ["tag:dev-service-host"],
+			"svc:devplanner-api":    ["tag:dev-service-host"],
+			"svc:lmapi":             ["tag:dev-service-host"],
+			"svc:memory":            ["tag:dev-service-host"],
+			"svc:lmeval":            ["tag:dev-service-host"],
+			"svc:lmeval-api":        ["tag:dev-service-host"],
+		},
+	},
+}

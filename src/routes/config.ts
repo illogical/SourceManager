@@ -6,13 +6,22 @@ import {
   applyEditableConfig,
 } from "../services/configEditor"
 import { ValidationError } from "../types"
+import { getConfig } from "../config"
 
 export const configRoute = new Elysia({ prefix: "/config" })
 
   // GET /v1/config — read editable snapshot (no token field)
   .get("/", () => {
     const config = readEditableConfig()
-    return { config }
+    const runtimeConfig = getConfig()
+    return {
+      config,
+      runtime: {
+        port: runtimeConfig.server.port,
+        workspacePath: runtimeConfig.workspacePath,
+        tokenConfigured: runtimeConfig.server.token.length > 0,
+      },
+    }
   })
 
   // POST /v1/config/validate — validate proposed edits; return errors + diff

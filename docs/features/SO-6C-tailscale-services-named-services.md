@@ -77,14 +77,18 @@ This plan requires more than ordinary Tailscale Serve:
 4. Each advertised Service host may need admin approval unless auto-approval is configured.
 5. Client devices must be on a Tailscale version that can discover Tailscale Services. Tailscale docs state clients version 1.94 and later no longer require enabling `accept-routes` for Services.
 6. Be aware of the documented no-hairpinning limitation: the service-host machine may not be able to access a Service that it hosts through the Service hostname.
+7. Client devices must be granted access to each Service in the tailnet policy file. Auto-approvers only control Service-host advertisement; they do not grant clients permission to connect.
 
-Recommended tailnet policy setup:
+Recommended tailnet policy setup (verified against [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) documentation, last validated Feb 2, 2026):
 
 ```json
 {
+  // Who may assign tag:dev-service-host to the dev machine (required for Service hosts)
   "tagOwners": {
     "tag:dev-service-host": ["autogroup:admin"]
   },
+
+  // Auto-approve Service-host advertisements from tagged dev machines
   "autoApprovers": {
     "services": {
       "svc:sourcemanager": ["tag:dev-service-host"],
@@ -96,11 +100,36 @@ Recommended tailnet policy setup:
       "svc:lmeval": ["tag:dev-service-host"],
       "svc:lmeval-api": ["tag:dev-service-host"]
     }
-  }
+  },
+
+  // Grant tailnet members access to each Service on HTTPS port 443
+  "grants": [
+    {
+      "src": ["autogroup:member"],
+      "dst": [
+        "svc:sourcemanager",
+        "svc:sourcemanager-api",
+        "svc:devplanner",
+        "svc:devplanner-api",
+        "svc:lmapi",
+        "svc:memory",
+        "svc:lmeval",
+        "svc:lmeval-api"
+      ],
+      "ip": ["443"]
+    }
+  ]
 }
 ```
 
-Final policy syntax should be verified against the live tailnet policy editor before rollout.
+Policy notes:
+
+- Tailscale policy files use HuJSON (JSON with comments and trailing commas). The admin console visual editor accepts the same structure.
+- `tagOwners` keys must use the `tag:` prefix; `autoApprovers.services` keys use `svc:<service-name>` for individual Services, or `tag:<service-tag>` to auto-approve hosts for all Services carrying that tag.
+- `autoApprovers.services` approvers can be users, groups, autogroups, or tags. Tag-based approvers are preferred so approval does not break if a user account changes.
+- Auto-approver policies apply when Tailscale first receives a Service-host advertisement. Adding or changing auto-approvers does not retroactively approve existing pending hosts — drain, clear, and re-advertise if needed.
+- `grants` are required for client access. Destinations use the `svc:` prefix (same name as in the admin console, without repeating `svc:` in the Service definition step). Restrict `src` or split grants if some Services should not be reachable by all members.
+- Authenticate the dev machine with `tag:dev-service-host` (for example, a pre-authorized auth key scoped to that tag). User-authenticated devices cannot host Tailscale Services.
 
 ---
 

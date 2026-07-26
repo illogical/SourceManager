@@ -159,20 +159,21 @@ describe("API calls with token", () => {
 
 describe("Config edit functions", () => {
   const mockEditableConfig: EditableConfig = {
-    server: { port: 17106, frontendPort: 17116, allowedIps: [] },
+    server: { frontendPort: 17116, allowedIps: [] },
     repos: [],
   }
+  const runtime = { port: 17106, workspacePath: "/workspace/projects", tokenConfigured: true }
 
   beforeEach(() => setToken("test-token"))
 
   it("getEditableConfig calls GET /v1/config", async () => {
-    const fetch = mockFetch(200, { config: mockEditableConfig })
+    const fetch = mockFetch(200, { config: mockEditableConfig, runtime })
     vi.stubGlobal("fetch", fetch)
 
     const result = await getEditableConfig()
     const [url] = fetch.mock.calls[0] as [string]
     expect(url).toBe("/v1/config")
-    expect(result.config.server.port).toBe(17106)
+    expect(result.runtime.port).toBe(17106)
   })
 
   it("validateEditableConfig calls POST /v1/config/validate", async () => {

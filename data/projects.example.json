@@ -1,15 +1,13 @@
 {
   "server": {
-    "port": 17106,
     "frontendPort": 17116,
-    "token": "replace-with-a-strong-secret-token",
     "allowedIps": []
   },
   "repos": [
     {
       "id": "my-web-app",
       "displayName": "My Web App",
-      "repoPath": "/home/user/projects/my-web-app",
+      "repoPath": "my-web-app",
       "defaultBranch": "main",
       "services": [
         {
@@ -32,14 +30,19 @@
           "healthUrl": "http://localhost:8080/health",
           "healthMode": "full",
           "tags": ["api"],
-          "allowedIps": ["192.168.1.0/24"]
+          "allowedIps": ["192.168.1.0/24"],
+          "tailnetHostname": "my-app",
+          "tailnetDomain": "your-tailnet.ts.net",
+          "tailscaleServeEnabled": false,
+          "tailscaleServeMode": "https",
+          "tailscaleServeTarget": "http://localhost:8080"
         }
       ]
     },
     {
       "id": "my-backend",
       "displayName": "My Backend",
-      "repoPath": "/home/user/projects/my-backend",
+      "repoPath": "my-backend",
       "defaultBranch": "main",
       "services": [
         {

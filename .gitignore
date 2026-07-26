@@ -19,6 +19,9 @@ lerna-debug.log*
 
 # Local files
 *.local
+.env
+.env.local
+.env.docker
 
 # Editor directories
 .vscode/*

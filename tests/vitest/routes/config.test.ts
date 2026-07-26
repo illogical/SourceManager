@@ -4,12 +4,12 @@ import type { EditableConfig, ValidationResult, ConfigDiff } from "../../../src/
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const mockEditableConfig: EditableConfig = {
-  server: { port: 17106, frontendPort: 17116, allowedIps: [] },
+  server: { frontendPort: 17116, allowedIps: [] },
   repos: [
     {
       id: "my-repo",
       displayName: "My Repo",
-      repoPath: "/dev/my-repo",
+      repoPath: "my-repo",
       defaultBranch: "main",
       services: [
         {
@@ -39,6 +39,14 @@ vi.mock("../../../src/services/configEditor", () => ({
   applyEditableConfig: vi.fn(async () => {}),
 }))
 
+vi.mock("../../../src/config", () => ({
+  getConfig: vi.fn(() => ({
+    workspacePath: "/workspace/projects",
+    server: { port: 17106, token: "secret", frontendPort: 17116, allowedIps: [] },
+    repos: [],
+  })),
+}))
+
 // ── App builder ───────────────────────────────────────────────────────────────
 
 async function buildApp() {
@@ -66,8 +74,11 @@ describe("GET /v1/config", () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.config).toBeDefined()
-    expect(body.config.server.port).toBe(17106)
+    expect(body.runtime.port).toBe(17106)
+    expect(body.runtime.workspacePath).toBe("/workspace/projects")
+    expect(body.runtime.tokenConfigured).toBe(true)
     expect(body.config.server).not.toHaveProperty("token")
+    expect(JSON.stringify(body)).not.toContain("secret")
   })
 })
 
@@ -125,7 +136,7 @@ describe("POST /v1/config/apply", () => {
     const { ValidationError } = await import("../../../src/types")
     const validationFailed: ValidationResult = {
       valid: false,
-      errors: [{ path: "server.port", message: "Must be an integer between 1 and 65535" }],
+      errors: [{ path: "repos[0].repoPath", message: "Must be relative" }],
       warnings: [],
     }
     const configEditor = await import("../../../src/services/configEditor")

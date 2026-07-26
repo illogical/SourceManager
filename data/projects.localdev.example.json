@@ -1,15 +1,13 @@
 {
   "server": {
-    "port": 17106,
     "frontendPort": 17116,
-    "token": "replace-with-a-strong-secret-token",
     "allowedIps": []
   },
   "repos": [
     {
       "id": "sourcemanager",
       "displayName": "SourceManager",
-      "repoPath": "C:\\LocalDev\\Projects\\SourceManager",
+      "repoPath": "SourceManager",
       "defaultBranch": "main",
       "services": [
         {
@@ -21,11 +19,16 @@
           "healthUrl": "http://localhost:17106/health",
           "healthMode": "full",
           "tags": ["api", "backend"],
-          "allowedIps": []
+          "allowedIps": [],
+          "tailnetHostname": "sourcemanager",
+          "tailnetDomain": "your-tailnet.ts.net",
+          "tailscaleServeEnabled": false,
+          "tailscaleServeMode": "https",
+          "tailscaleServeTarget": "http://localhost:17106"
         },
         {
-          "id": "sourcemanager-frontend",
-          "displayName": "SourceManager Frontend",
+          "id": "sourcemanager-web",
+          "displayName": "SourceManager Web",
           "packageManager": "bun",
           "scriptName": "dev:frontend",
           "port": 17116,
@@ -39,7 +42,7 @@
     {
       "id": "devplanner",
       "displayName": "DevPlanner",
-      "repoPath": "C:\\LocalDev\\Projects\\DevPlanner",
+      "repoPath": "DevPlanner",
       "defaultBranch": "main",
       "services": [
         {
@@ -51,11 +54,16 @@
           "healthUrl": "http://localhost:17103/health",
           "healthMode": "ping",
           "tags": ["api", "backend"],
-          "allowedIps": []
+          "allowedIps": [],
+          "tailnetHostname": "devplanner",
+          "tailnetDomain": "your-tailnet.ts.net",
+          "tailscaleServeEnabled": false,
+          "tailscaleServeMode": "https",
+          "tailscaleServeTarget": "http://localhost:17103"
         },
         {
           "id": "devplanner-web",
-          "displayName": "DevPlanner Frontend",
+          "displayName": "DevPlanner Web",
           "packageManager": "bun",
           "scriptName": "dev:frontend",
           "port": 5173,
@@ -69,7 +77,7 @@
     {
       "id": "lmapi",
       "displayName": "LMApi",
-      "repoPath": "C:\\LocalDev\\Projects\\LMApi",
+      "repoPath": "LMApi",
       "defaultBranch": "main",
       "services": [
         {
@@ -81,14 +89,19 @@
           "healthUrl": "http://localhost:3111/health",
           "healthMode": "ping",
           "tags": ["api", "frontend", "dashboard"],
-          "allowedIps": []
+          "allowedIps": [],
+          "tailnetHostname": "lmapi",
+          "tailnetDomain": "your-tailnet.ts.net",
+          "tailscaleServeEnabled": false,
+          "tailscaleServeMode": "https",
+          "tailscaleServeTarget": "http://localhost:3111"
         }
       ]
     },
     {
       "id": "memoryapi",
       "displayName": "MemoryApi",
-      "repoPath": "C:\\LocalDev\\Projects\\MemoryApi",
+      "repoPath": "MemoryApi",
       "defaultBranch": "main",
       "services": [
         {
@@ -100,14 +113,19 @@
           "healthUrl": "http://localhost:17107/",
           "healthMode": "ping",
           "tags": ["api", "backend", "frontend"],
-          "allowedIps": []
+          "allowedIps": [],
+          "tailnetHostname": "memory",
+          "tailnetDomain": "your-tailnet.ts.net",
+          "tailscaleServeEnabled": false,
+          "tailscaleServeMode": "https",
+          "tailscaleServeTarget": "http://localhost:17107"
         }
       ]
     },
     {
       "id": "lmeval",
       "displayName": "LMEval",
-      "repoPath": "C:\\LocalDev\\Projects\\LMEval",
+      "repoPath": "LMEval",
       "defaultBranch": "main",
       "services": [
         {
@@ -119,7 +137,12 @@
           "healthUrl": "http://localhost:3200/api/eval/templates",
           "healthMode": "ping",
           "tags": ["api", "backend"],
-          "allowedIps": []
+          "allowedIps": [],
+          "tailnetHostname": "lmeval",
+          "tailnetDomain": "your-tailnet.ts.net",
+          "tailscaleServeEnabled": false,
+          "tailscaleServeMode": "https",
+          "tailscaleServeTarget": "http://localhost:3200"
         },
         {
           "id": "lmeval-frontend",

@@ -1,7 +1,12 @@
 import { useState, useEffect } from "react"
 import { ArrowLeft, ChevronDown, ChevronRight, AlertCircle, Plus, Trash2 } from "lucide-react"
 import * as client from "../api/client"
-import type { EditableConfig, EditableServiceConfig, ValidationFieldError } from "../api/types"
+import type {
+  EditableConfig,
+  EditableServiceConfig,
+  RuntimeConfigSummary,
+  ValidationFieldError,
+} from "../api/types"
 import styles from "./Settings.module.css"
 
 // ── Validation helpers (mirrors backend rules) ────────────────────────────────
@@ -29,9 +34,6 @@ function isValidCidr(s: string): boolean {
 function validateDraft(draft: EditableConfig, newIds: Set<string>): Record<string, string> {
   const errors: Record<string, string> = {}
 
-  if (!Number.isInteger(draft.server.port) || draft.server.port < 1 || draft.server.port > 65535) {
-    errors["server.port"] = "Must be an integer between 1 and 65535"
-  }
   if (!Number.isInteger(draft.server.frontendPort) || draft.server.frontendPort < 1 || draft.server.frontendPort > 65535) {
     errors["server.frontendPort"] = "Must be an integer between 1 and 65535"
   }
@@ -57,7 +59,17 @@ function validateDraft(draft: EditableConfig, newIds: Set<string>): Record<strin
     seenRepoIds.add(repo.id)
 
     if (!repo.displayName.trim()) errors[`${rp}.displayName`] = "Required"
-    if (!repo.repoPath.trim()) errors[`${rp}.repoPath`] = "Required"
+    if (!repo.repoPath.trim()) {
+      errors[`${rp}.repoPath`] = "Required"
+    } else if (
+      repo.repoPath.startsWith("/")
+      || /^[a-zA-Z]:[\\/]/.test(repo.repoPath)
+      || repo.repoPath.startsWith("\\")
+    ) {
+      errors[`${rp}.repoPath`] = "Must be relative to the workspace"
+    } else if (repo.repoPath.split(/[\\/]/).includes("..")) {
+      errors[`${rp}.repoPath`] = "Cannot escape the workspace"
+    }
     if (!repo.defaultBranch.trim()) {
       errors[`${rp}.defaultBranch`] = "Required"
     } else if (!BRANCH_RE.test(repo.defaultBranch)) {
@@ -143,6 +155,12 @@ function joinLines(arr: string[]): string {
   return arr.join(", ")
 }
 
+function resolvedPathPreview(workspacePath: string, repoPath: string): string {
+  if (!repoPath) return workspacePath
+  const separator = workspacePath.includes("\\") ? "\\" : "/"
+  return `${workspacePath.replace(/[\\/]$/, "")}${separator}${repoPath.replace(/^[\\/]/, "")}`
+}
+
 /** Generate a unique ID that doesn't collide with the provided set */
 function uniqueId(base: string, taken: Set<string>): string {
   if (!taken.has(base)) return base
@@ -164,6 +182,7 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
   // ── Config editor state ────────────────────────────────────────────────────
   const [configPhase, setConfigPhase] = useState<"loading" | "ready" | "loadError">("loading")
   const [draft, setDraft] = useState<EditableConfig | null>(null)
+  const [runtime, setRuntime] = useState<RuntimeConfigSummary | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [serverErrors, setServerErrors] = useState<ValidationFieldError[]>([])
   const [isSaving, setIsSaving] = useState(false)
@@ -176,9 +195,10 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
     if (!hasToken) return
     let cancelled = false
     client.getEditableConfig()
-      .then(({ config }) => {
+      .then(({ config, runtime }) => {
         if (!cancelled) {
           setDraft(config)
+          setRuntime(runtime)
           setConfigPhase("ready")
         }
       })
@@ -244,7 +264,7 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
     setServerErrors([])
     try {
       await client.applyEditableConfig(draft)
-      onSaved?.("Configuration saved — restart required if ports changed")
+      onSaved?.("Configuration saved")
     } catch (err) {
       if (err instanceof client.ApiError && err.status === 422) {
         const body = err.body as { validation?: { errors?: ValidationFieldError[] } }
@@ -432,7 +452,7 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
     return (
       <div className={styles.container}>
         <h2 className={styles.heading}>Connect to SourceManager</h2>
-        <p className={styles.intro}>Enter your API token from <code>data/projects.json</code> to get started.</p>
+        <p className={styles.intro}>Enter the API token configured as <code>SOURCEMANAGER_TOKEN</code> to get started.</p>
         <TokenForm
           token={tokenInput}
           onChange={setTokenInput}
@@ -497,22 +517,26 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
           <section className={styles.section}>
             <h2 className={styles.sectionHeading}>Server</h2>
             <div className={styles.sectionCard}>
+              {runtime && (
+                <div className={styles.runtimeGrid}>
+                  <div className={styles.runtimeValue}>
+                    <span className={styles.runtimeLabel}>API Port</span>
+                    <code>{runtime.port}</code>
+                    <span>Managed by environment</span>
+                  </div>
+                  <div className={styles.runtimeValue}>
+                    <span className={styles.runtimeLabel}>Workspace</span>
+                    <code>{runtime.workspacePath}</code>
+                    <span>Managed by environment</span>
+                  </div>
+                  <div className={styles.runtimeValue}>
+                    <span className={styles.runtimeLabel}>API Token</span>
+                    <code>{runtime.tokenConfigured ? "Configured" : "Missing"}</code>
+                    <span>The token value is never returned</span>
+                  </div>
+                </div>
+              )}
               <div className={styles.fieldsRow}>
-                <Field
-                  label="API Port"
-                  required
-                  path="server.port"
-                  error={fieldErrors["server.port"]}
-                >
-                  <input
-                    className={inputClass(fieldErrors["server.port"])}
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={draft.server.port}
-                    onChange={(e) => setServerField("port", parseInt(e.target.value) || 0)}
-                  />
-                </Field>
                 <Field
                   label="Frontend Dev Port"
                   path="server.frontendPort"
@@ -601,11 +625,13 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
                       />
                     </Field>
                     <Field
-                      label="Repo Path"
+                      label="Workspace-Relative Repo Path"
                       required
                       path={`repos[${i}].repoPath`}
                       error={fieldErrors[`repos[${i}].repoPath`]}
-                      hint="Absolute path to the git repository"
+                      hint={runtime
+                        ? `Resolved path: ${resolvedPathPreview(runtime.workspacePath, repo.repoPath)}`
+                        : "Path relative to the configured workspace"}
                     >
                       <input
                         className={`${styles.input} ${styles.inputMono} ${fieldErrors[`repos[${i}].repoPath`] ? styles.inputError : ""}`}
@@ -956,8 +982,8 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
         <h2 className={styles.sectionHeading}>API Token</h2>
         <div className={styles.sectionCard}>
           <p className={styles.tokenNote}>
-            The API token is set in <code>data/projects.json</code> under <code>server.token</code>.
-            To test a different token, enter it below. Token rotation requires editing the config file directly.
+            The API token is configured with <code>SOURCEMANAGER_TOKEN</code>.
+            To test a different token, enter it below. Token rotation requires updating the environment and restarting SourceManager.
           </p>
           <TokenForm
             token={tokenInput}
@@ -1024,7 +1050,7 @@ function TokenForm({ token, onChange, onSubmit, status, message, hasExisting, on
           id="sm-token"
           className={styles.input}
           type="password"
-          placeholder="Enter token from projects.json"
+          placeholder="Enter SOURCEMANAGER_TOKEN"
           value={token}
           onChange={(e) => onChange(e.target.value)}
           autoComplete="current-password"
@@ -1048,4 +1074,3 @@ function TokenForm({ token, onChange, onSubmit, status, message, hasExisting, on
     </>
   )
 }
-

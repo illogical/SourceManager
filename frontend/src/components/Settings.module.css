@@ -167,6 +167,51 @@
   padding: 20px 20px 16px;
 }
 
+.runtimeGrid {
+  display: grid;
+  grid-template-columns: 0.7fr 1.5fr 1fr;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.runtimeValue {
+  min-width: 0;
+  padding: 12px;
+  background: rgba(121, 215, 255, 0.05);
+  border: 1px solid rgba(121, 215, 255, 0.14);
+  border-radius: 8px;
+}
+
+.runtimeValue code,
+.runtimeValue span {
+  display: block;
+}
+
+.runtimeValue code {
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+  color: #e5edf8;
+}
+
+.runtimeValue > span:last-child {
+  color: #8295ad;
+  font-size: 0.72rem;
+}
+
+.runtimeLabel {
+  color: #79d7ff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 720px) {
+  .runtimeGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Repo cards ───────────────────────────────────────────────────────────── */
 
 .repoList {

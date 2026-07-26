@@ -1,13 +1,13 @@
 import { readFileSync, writeFileSync, renameSync } from "fs"
 import { CONFIG_PATH, invalidateCache } from "../config"
 import type {
-  AppConfig,
   EditableConfig,
   EditableServiceConfig,
   ValidationResult,
   ValidationFieldError,
   ConfigDiff,
   ConfigDiffEntry,
+  ProjectsFileConfig,
 } from "../types"
 import { ValidationError } from "../types"
 
@@ -42,16 +42,16 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-function rawRead(configPath: string): AppConfig {
+function rawRead(configPath: string): ProjectsFileConfig {
   const raw = readFileSync(configPath, "utf-8")
-  return JSON.parse(raw) as AppConfig
+  return JSON.parse(raw) as ProjectsFileConfig
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Read the current config as an editable snapshot.
- * Reads from disk fresh (not from cache) and strips server.token.
+ * Reads JSON-owned fields from disk fresh (not from cache).
  * Pass configPath to override the default (useful in tests).
  */
 export function readEditableConfig(configPath: string = CONFIG_PATH): EditableConfig {
@@ -59,10 +59,9 @@ export function readEditableConfig(configPath: string = CONFIG_PATH): EditableCo
   return toEditableConfig(raw)
 }
 
-function toEditableConfig(config: AppConfig): EditableConfig {
+function toEditableConfig(config: ProjectsFileConfig): EditableConfig {
   return {
     server: {
-      port: config.server.port,
       frontendPort: config.server.frontendPort ?? 5173,
       allowedIps: [...(config.server.allowedIps ?? [])],
     },
@@ -109,9 +108,6 @@ export function validateEditableConfig(proposed: EditableConfig): ValidationResu
   }
 
   // ── Server ──────────────────────────────────────────────────────────────────
-  if (!Number.isInteger(proposed.server.port) || proposed.server.port < 1 || proposed.server.port > 65535) {
-    err("server.port", "Port must be an integer between 1 and 65535")
-  }
   if (!Number.isInteger(proposed.server.frontendPort) || proposed.server.frontendPort < 1 || proposed.server.frontendPort > 65535) {
     err("server.frontendPort", "Frontend port must be an integer between 1 and 65535")
   }
@@ -147,6 +143,10 @@ export function validateEditableConfig(proposed: EditableConfig): ValidationResu
     }
     if (!repo.repoPath?.trim()) {
       err(`${rp}.repoPath`, "Repo path is required")
+    } else if (repo.repoPath.startsWith("/") || repo.repoPath.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(repo.repoPath)) {
+      err(`${rp}.repoPath`, "Repo path must be relative to the configured workspace")
+    } else if (repo.repoPath.split(/[\\/]/).includes("..")) {
+      err(`${rp}.repoPath`, "Repo path cannot escape the configured workspace")
     }
     if (!repo.defaultBranch?.trim()) {
       err(`${rp}.defaultBranch`, "Default branch is required")
@@ -221,7 +221,7 @@ export function validateEditableConfig(proposed: EditableConfig): ValidationResu
 
 /**
  * Compute a field-level diff between two editable configs.
- * Only covers editable fields (excludes id, server.token).
+ * Only covers JSON-owned editable fields (excluding IDs).
  */
 export function diffEditableConfig(current: EditableConfig, proposed: EditableConfig): ConfigDiff {
   const changes: ConfigDiffEntry[] = []
@@ -231,7 +231,6 @@ export function diffEditableConfig(current: EditableConfig, proposed: EditableCo
   }
 
   // Server (editable fields only)
-  check("server.port", current.server.port, proposed.server.port)
   check("server.frontendPort", current.server.frontendPort, proposed.server.frontendPort)
   check("server.allowedIps", current.server.allowedIps, proposed.server.allowedIps)
 
@@ -269,7 +268,8 @@ export function diffEditableConfig(current: EditableConfig, proposed: EditableCo
 
 /**
  * Validate and atomically write the proposed config.
- * - Preserves server.token and all IDs from the current disk file.
+ * - Preserves IDs from the current disk file.
+ * - Drops legacy environment-owned server.port and server.token fields.
  * - New repos/services (IDs not on disk) are appended; removed entries are dropped.
  * - Writes to a temp file then renames (atomic on POSIX; best-effort on Windows).
  * - Invalidates the in-memory config cache.
@@ -311,20 +311,18 @@ export async function applyEditableConfig(
     throw new ValidationError(validation)
   }
 
-  // 2. Read current raw config to get immutable fields
+  // 2. Read current raw config to get immutable IDs
   const current = rawRead(configPath)
 
   // Build lookup maps for ID-based merge
   const currentRepoMap = new Map(current.repos.map((r) => [r.id, r]))
 
   // 3. Merge: proposed values over current using ID-based lookup.
-  //    - Existing repos/services: update editable fields, preserve token/IDs from disk.
+  //    - Existing repos/services: update editable fields and preserve IDs from disk.
   //    - New repos/services (ID not found on disk): append verbatim.
   //    - Repos/services absent from proposal: removed.
-  const merged: AppConfig = {
+  const merged: ProjectsFileConfig = {
     server: {
-      ...current.server,           // preserves token
-      port: proposed.server.port,
       frontendPort: proposed.server.frontendPort,
       allowedIps: proposed.server.allowedIps,
     },

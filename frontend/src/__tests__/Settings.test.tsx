@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { vi, beforeEach } from "vitest"
 import Settings from "../components/Settings"
 import * as client from "../api/client"
+import type { ConfigResponse } from "../api/types"
 
 // Stub localStorage
 const localStorageMock = (() => {
@@ -69,14 +70,14 @@ describe("Settings — unauthenticated view", () => {
 // ── Authenticated view (token stored) ────────────────────────────────────────
 
 describe("Settings — authenticated view", () => {
-  const mockConfig = {
+  const mockConfig: ConfigResponse = {
     config: {
-      server: { port: 17106, frontendPort: 17116, allowedIps: [] },
+      server: { frontendPort: 17116, allowedIps: [] },
       repos: [
         {
           id: "my-repo",
           displayName: "My Repo",
-          repoPath: "/dev/my-repo",
+          repoPath: "my-repo",
           defaultBranch: "main",
           services: [
             {
@@ -94,6 +95,11 @@ describe("Settings — authenticated view", () => {
           ],
         },
       ],
+    },
+    runtime: {
+      port: 17106,
+      workspacePath: "/workspace/projects",
+      tokenConfigured: true,
     },
   }
 
@@ -125,6 +131,15 @@ describe("Settings — authenticated view", () => {
     await waitFor(() => {
       expect(screen.getAllByDisplayValue("My Repo").length).toBeGreaterThan(0)
     })
+  })
+
+  it("shows environment-owned runtime values as read-only", async () => {
+    vi.spyOn(client, "getEditableConfig").mockResolvedValue(mockConfig)
+    render(<Settings />)
+
+    expect(await screen.findByText("/workspace/projects")).toBeInTheDocument()
+    expect(screen.getByText("17106")).toBeInTheDocument()
+    expect(screen.queryByRole("spinbutton", { name: /api port/i })).not.toBeInTheDocument()
   })
 
   it("calls applyEditableConfig and invokes onSaved on successful save", async () => {

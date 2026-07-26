@@ -19,13 +19,13 @@ The UI must **not** become an arbitrary shell editor. It exposes only an allowli
 | Decision | Choice |
 |---|---|
 | Config source of truth | `data/projects.json` (unchanged) |
-| Editable scope | Allowlisted fields only — IDs and `server.token` are read-only in the editor |
+| Editable scope | JSON-owned allowlisted fields only; IDs are read-only and runtime environment values are shown separately |
 | Apply mechanism | Atomic temp-file + rename on the backend; never in-place overwrite |
 | Validation location | Backend (authoritative); frontend shows the backend's structured errors |
 | Diff display | Field-level diff: old value vs new value per changed field |
 | In-memory cache | `cachedConfig` in `config.ts` is invalidated after a successful apply |
 | Tests | Vitest (node) for backend service + routes; Vitest (jsdom) for frontend UI |
-| Non-goals | No `server.token` editing in the UI (security risk) |
+| Non-goals | No environment-variable editing in the UI |
 
 ---
 
@@ -58,18 +58,18 @@ The following fields may be edited through the UI. All others are read-only or n
 
 | Field | Editable | Validation |
 |---|---|---|
-| `server.port` | ✓ | Integer 1–65535 |
+| Effective API port | Read-only | Required `SOURCEMANAGER_PORT` environment value |
 | `server.frontendPort` | ✓ | Integer 1–65535 |
 | `server.allowedIps` | ✓ | Array of valid CIDR strings (empty = all) |
 
-> `server.token` is **not** editable in the UI. Token rotation requires direct file edit.
+> The API port, token, and workspace are environment-owned and read-only in the UI.
 
 **Repo-level** (one block per repo):
 
 | Field | Editable | Validation |
 |---|---|---|
 | `repo.displayName` | ✓ | Non-empty string |
-| `repo.repoPath` | ✓ | Absolute path (non-empty); cannot point outside root |
+| `repo.repoPath` | ✓ | Non-empty path relative to the configured workspace; cannot escape it |
 | `repo.defaultBranch` | ✓ | Matches `/^[\w./-]+$/` |
 | `repo.id` | Read-only | Cannot be changed — would invalidate running processes |
 

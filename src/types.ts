@@ -7,6 +7,15 @@ export interface ServerConfig {
   allowedIps: string[]
 }
 
+export interface ProjectsFileServerConfig {
+  frontendPort?: number
+  allowedIps?: string[]
+  /** @deprecated Configure SOURCEMANAGER_PORT in .env instead. */
+  port?: number
+  /** @deprecated Configure SOURCEMANAGER_TOKEN in .env instead. */
+  token?: string
+}
+
 // ── Service config (one runnable process) ─────────────────────────────────────
 
 export interface ServiceConfig {
@@ -41,8 +50,20 @@ export interface RepoConfig {
 // ── App config ────────────────────────────────────────────────────────────────
 
 export interface AppConfig {
+  workspacePath: string
   server: ServerConfig
   repos: RepoConfig[]
+}
+
+export interface ProjectsFileConfig {
+  server: ProjectsFileServerConfig
+  repos: RepoConfig[]
+}
+
+export interface RuntimeConfigSummary {
+  port: number
+  workspacePath: string
+  tokenConfigured: boolean
 }
 
 // ── Lifecycle state machine ───────────────────────────────────────────────────
@@ -160,7 +181,6 @@ export interface UpdateAccepted {
 // ── Config edit types ─────────────────────────────────────────────────────────
 
 export interface EditableServerConfig {
-  port: number
   frontendPort: number
   allowedIps: string[]
 }

@@ -1,7 +1,12 @@
-import { join, dirname } from "path"
+import { join, dirname, isAbsolute, posix, relative, resolve, sep, win32 } from "path"
 import { fileURLToPath } from "url"
 import { readFileSync } from "fs"
-import type { AppConfig, RepoConfig, ServiceConfig } from "./types"
+import type {
+  AppConfig,
+  ProjectsFileConfig,
+  RepoConfig,
+  ServiceConfig,
+} from "./types"
 
 const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
 export const CONFIG_PATH = join(_dir, "..", "data", "projects.json")
@@ -38,9 +43,24 @@ export function loadConfig(): AppConfig {
     process.exit(1)
   }
 
-  const config = parsed as AppConfig
+  const fileConfig = parsed as ProjectsFileConfig
   try {
+    const environment = loadEnvironmentConfig()
+    warnAboutLegacyServerFields(fileConfig)
+    const config: AppConfig = {
+      workspacePath: environment.workspacePath,
+      server: {
+        port: environment.port,
+        token: environment.token,
+        frontendPort: fileConfig.server?.frontendPort,
+        allowedIps: fileConfig.server?.allowedIps ?? [],
+      },
+      repos: fileConfig.repos,
+    }
     validateConfig(config)
+    resolveRepoPaths(config)
+    cachedConfig = config
+    return config
   } catch (e) {
     if (e instanceof ConfigError) {
       console.error(`[SourceManager] CONFIG ERROR: ${e.message}`)
@@ -49,8 +69,77 @@ export function loadConfig(): AppConfig {
     throw e
   }
 
-  cachedConfig = config
-  return config
+  throw new Error("Unreachable")
+}
+
+export interface EnvironmentConfig {
+  port: number
+  token: string
+  workspacePath: string
+}
+
+export function loadEnvironmentConfig(
+  env: Record<string, string | undefined> = process.env,
+): EnvironmentConfig {
+  const portRaw = env.SOURCEMANAGER_PORT?.trim()
+  if (!portRaw) {
+    throw new ConfigError("SOURCEMANAGER_PORT is required in the environment")
+  }
+  if (!/^\d+$/.test(portRaw)) {
+    throw new ConfigError("SOURCEMANAGER_PORT must be an integer between 1 and 65535")
+  }
+  const port = Number(portRaw)
+  if (port < 1 || port > 65535) {
+    throw new ConfigError("SOURCEMANAGER_PORT must be an integer between 1 and 65535")
+  }
+
+  const token = env.SOURCEMANAGER_TOKEN?.trim()
+  if (!token) {
+    throw new ConfigError("SOURCEMANAGER_TOKEN is required in the environment")
+  }
+
+  const workspacePath = env.SOURCEMANAGER_WORKSPACE_PATH?.trim()
+  if (!workspacePath) {
+    throw new ConfigError("SOURCEMANAGER_WORKSPACE_PATH is required in the environment")
+  }
+  if (!isAbsolute(workspacePath)) {
+    throw new ConfigError("SOURCEMANAGER_WORKSPACE_PATH must be an absolute path")
+  }
+
+  return { port, token, workspacePath: resolve(workspacePath) }
+}
+
+function warnAboutLegacyServerFields(config: ProjectsFileConfig): void {
+  if (config.server && ("port" in config.server || "token" in config.server)) {
+    console.warn(
+      "[SourceManager] CONFIG WARNING: server.port and server.token in projects.json are ignored; configure them in .env instead.",
+    )
+  }
+}
+
+function isCrossPlatformAbsolute(path: string): boolean {
+  return posix.isAbsolute(path) || win32.isAbsolute(path)
+}
+
+function resolvedRepoPath(workspacePath: string, repoPath: string): string {
+  if (isCrossPlatformAbsolute(repoPath)) {
+    abort(`Repo path "${repoPath}" must be relative to SOURCEMANAGER_WORKSPACE_PATH`)
+  }
+  if (repoPath.split(/[\\/]/).includes("..")) {
+    abort(`Repo path "${repoPath}" escapes SOURCEMANAGER_WORKSPACE_PATH`)
+  }
+  const resolvedPath = resolve(workspacePath, repoPath)
+  const fromWorkspace = relative(workspacePath, resolvedPath)
+  if (fromWorkspace === ".." || fromWorkspace.startsWith(`..${sep}`) || isAbsolute(fromWorkspace)) {
+    abort(`Repo path "${repoPath}" escapes SOURCEMANAGER_WORKSPACE_PATH`)
+  }
+  return resolvedPath
+}
+
+export function resolveRepoPaths(config: AppConfig): void {
+  for (const repo of config.repos) {
+    repo.repoPath = resolvedRepoPath(config.workspacePath, repo.repoPath)
+  }
 }
 
 export class ConfigError extends Error {
@@ -86,9 +175,12 @@ function abort(msg: string): never {
 // ── Main validation ───────────────────────────────────────────────────────────
 
 export function validateConfig(config: AppConfig): void {
-  if (!config.server?.token) abort("server.token is required in projects.json")
+  if (!config.workspacePath || !isAbsolute(config.workspacePath)) {
+    abort("workspacePath must be an absolute path")
+  }
+  if (!config.server?.token) abort("SOURCEMANAGER_TOKEN is required in the environment")
   if (!config.server?.port || config.server.port < 1 || config.server.port > 65535) {
-    abort("server.port must be a number between 1 and 65535")
+    abort("SOURCEMANAGER_PORT must be an integer between 1 and 65535")
   }
   config.server.frontendPort ??= 5173
   if (config.server.frontendPort < 1 || config.server.frontendPort > 65535) {
@@ -103,13 +195,18 @@ export function validateConfig(config: AppConfig): void {
   const serviceIds = new Set<string>()
 
   for (const repo of config.repos) {
-    validateRepo(repo, repoIds, serviceIds)
+    validateRepo(repo, config.workspacePath, repoIds, serviceIds)
   }
 
   cachedConfig = config
 }
 
-function validateRepo(repo: RepoConfig, repoIds: Set<string>, serviceIds: Set<string>): void {
+function validateRepo(
+  repo: RepoConfig,
+  workspacePath: string,
+  repoIds: Set<string>,
+  serviceIds: Set<string>,
+): void {
   if (!repo.id) abort(`A repo entry is missing the required "id" field`)
   if (!SLUG_RE.test(repo.id)) abort(`Repo id "${repo.id}" must match /^[a-z0-9-]+$/ (lowercase letters, digits, hyphens)`)
   if (repoIds.has(repo.id)) abort(`Duplicate repo id: "${repo.id}"`)
@@ -117,6 +214,7 @@ function validateRepo(repo: RepoConfig, repoIds: Set<string>, serviceIds: Set<st
 
   if (!repo.displayName) abort(`Repo "${repo.id}" is missing "displayName"`)
   if (!repo.repoPath) abort(`Repo "${repo.id}" is missing "repoPath"`)
+  resolvedRepoPath(workspacePath, repo.repoPath)
   if (!repo.defaultBranch) abort(`Repo "${repo.id}" is missing "defaultBranch"`)
 
   if (!Array.isArray(repo.services)) abort(`Repo "${repo.id}" must have a services array`)

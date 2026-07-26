@@ -64,9 +64,14 @@ export interface UpdateRequest {
 // ── Config edit ────────────────────────────────────────────────────────────────
 
 export interface EditableServerConfig {
-  port: number
   frontendPort: number
   allowedIps: string[]
+}
+
+export interface RuntimeConfigSummary {
+  port: number
+  workspacePath: string
+  tokenConfigured: boolean
 }
 
 export interface EditableServiceConfig {
@@ -98,6 +103,11 @@ export interface EditableRepoConfig {
 export interface EditableConfig {
   server: EditableServerConfig
   repos: EditableRepoConfig[]
+}
+
+export interface ConfigResponse {
+  config: EditableConfig
+  runtime: RuntimeConfigSummary
 }
 
 export interface ValidationFieldError {
