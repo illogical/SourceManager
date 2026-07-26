@@ -162,7 +162,7 @@ describe("Config edit functions", () => {
     server: { frontendPort: 17116, allowedIps: [] },
     repos: [],
   }
-  const runtime = { port: 17106, workspacePath: "/workspace/projects", tokenConfigured: true }
+  const runtime = { port: 17106, workspacePath: "/localdev/projects", tokenConfigured: true }
 
   beforeEach(() => setToken("test-token"))
 

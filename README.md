@@ -2,7 +2,7 @@
 
 A secure HTTP API that manages Git operations and server process lifecycle for web applications running on a Windows dev machine. Designed to be called by AI agents on remote machines to pull the latest code and restart servers so changes are visible immediately.
 
-**Stack:** Bun + TypeScript + Elysia (API) + React + Vite (dashboard) — runs as a lightweight Windows service on port `17106`.
+**Stack:** Bun + TypeScript + Elysia (API) + React + Vite (dashboard) — runs as a lightweight Windows development host on port `17106`.
 
 ---
 
@@ -24,8 +24,10 @@ An OpenAPI spec is served live at `/swagger` for use with agent scripts and tool
 - [Bun](https://bun.sh) >= 1.1
 - Windows 10/11 (primary target; Linux compatible for testing)
 - Git available in PATH
-- [Node.js](https://nodejs.org) is **not** required — Bun handles everything
+- [Node.js](https://nodejs.org) is not required by SourceManager itself
 - Each managed project cloned under `C:\LocalDev\Projects\` (or any path you configure)
+- Every managed project runtime and configured package manager available in the
+  same user `PATH` (for example Node.js/npm, pnpm, or yarn)
 
 ---
 
@@ -39,24 +41,24 @@ bun install
 
 **2. Create your configuration**
 
+```powershell
+Copy-Item data/projects.example.json data/projects.json
+Copy-Item .env.example .env
+```
+
+On macOS or Linux, use:
+
 ```bash
 cp data/projects.example.json data/projects.json
 cp .env.example .env
-cp .env.local.example .env.local
 ```
 
-Set the shared runtime values in `.env`:
+Set the runtime values in `.env`:
 
 ```dotenv
 SOURCEMANAGER_PORT=17106
 SOURCEMANAGER_TOKEN=replace-with-a-long-random-token
-SOURCEMANAGER_HOST_WORKSPACE_PATH=/Users/your-name/projects
-```
-
-`.env.local` maps the local runtime workspace to that host directory:
-
-```dotenv
-SOURCEMANAGER_WORKSPACE_PATH=${SOURCEMANAGER_HOST_WORKSPACE_PATH}
+SOURCEMANAGER_WORKSPACE_PATH=C:/LocalDev/Projects
 ```
 
 Edit `data/projects.json`. Repository paths are relative to the workspace:
@@ -105,7 +107,7 @@ This starts two processes concurrently:
 | Frontend (Vite HMR) | `bun run dev:frontend` | `http://localhost:<server.frontendPort>` (`5173` if omitted) |
 
 Open the configured frontend URL in your browser. Bun automatically loads
-`.env` and then `.env.local`. Vite reads `server.frontendPort` from
+`.env` and an optional `.env.local` override. Vite reads `server.frontendPort` from
 `data/projects.json` and proxies `/v1/*`, `/health`, and `/swagger` to
 `SOURCEMANAGER_PORT`, so the backend port is defined once. Both servers support
 hot reload.
@@ -136,201 +138,84 @@ After building, `bun run start` serves everything on the configured
 
 ---
 
-## Running with Docker Desktop
+## Running on Windows Login
 
-The included `Dockerfile` builds the React dashboard and runs the API in a
-Debian-based Bun container. `compose.yaml` persists SourceManager state, mounts
-the repositories it manages, and uses `restart: unless-stopped` so the container
-starts again whenever Docker Desktop starts.
+Use the checked-in PowerShell utility to register an interactive Scheduled Task
+for your current Windows user. It runs `bun run dev` after logon, so a visible
+terminal shows both the backend and Vite output. It does not store your Windows
+password or SourceManager token, and it does not require an elevated task.
 
-### 1. Create the runtime configuration
-
-The application configuration file is `data/projects.json` (plural). Create it
-from the example:
+Install dependencies and create `.env` and `data/projects.json` before
+registering the task. Then run:
 
 ```powershell
-Copy-Item data/projects.example.json data/projects.json
-Copy-Item .env.example .env
-Copy-Item .env.docker.example .env.docker
+# Register or update the at-logon task
+.\scripts\SourceManagerStartup.ps1 Install
+
+# Start it now without signing out
+.\scripts\SourceManagerStartup.ps1 Start
 ```
 
-On macOS or Linux, use `cp` instead:
+Manage it with:
 
-```bash
-cp data/projects.example.json data/projects.json
-cp .env.example .env
-cp .env.docker.example .env.docker
+```powershell
+.\scripts\SourceManagerStartup.ps1 Status
+.\scripts\SourceManagerStartup.ps1 Stop
+.\scripts\SourceManagerStartup.ps1 Start
+.\scripts\SourceManagerStartup.ps1 Uninstall
 ```
 
-Edit `.env`:
+`Install` and `Uninstall` are idempotent. The script resolves its repository and
+Bun executable with absolute paths, keeps launcher transcripts under
+`data/logs/`, and reports the API and Vite listener status without showing
+secrets. Closing the terminal ends that development session; use `Start` to
+open it again.
 
-```dotenv
-SOURCEMANAGER_PORT=17106
-SOURCEMANAGER_TOKEN=replace-with-a-long-random-token
-SOURCEMANAGER_HOST_WORKSPACE_PATH=C:/LocalDev/Projects
-```
-
-`SOURCEMANAGER_HOST_WORKSPACE_PATH` is the absolute host directory containing all managed
-repositories. A macOS value could be `/Users/your-name/projects`. Docker mounts
-that directory at `/workspace/projects` inside the container.
-
-`.env.docker` supplies the container-specific runtime path:
-
-```dotenv
-SOURCEMANAGER_WORKSPACE_PATH=/workspace/projects
-```
-
-The same relative `repoPath` values work locally and in Docker:
-
-```json
-{
-  "server": {
-    "frontendPort": 17116,
-    "allowedIps": []
-  },
-  "repos": [
-    {
-      "id": "my-app",
-      "displayName": "My Application",
-      "repoPath": "my-app",
-      "defaultBranch": "main",
-      "services": [
-        {
-          "id": "my-app-web",
-          "displayName": "Web Server",
-          "port": 3000,
-          "healthUrl": "http://localhost:3000/health",
-          "healthMode": "ping",
-          "packageManager": "auto",
-          "scriptName": "dev",
-          "allowedIps": [],
-          "tags": []
-        }
-      ]
-    }
-  ]
-}
-```
-
-The real `.env`, `.env.local`, and `.env.docker` files are ignored by Git.
-The API port, token, and runtime workspace are required environment values.
-Legacy `server.port` and `server.token` JSON fields are ignored and are removed
-the next time Settings saves the file.
-
-If you use a different API port, set the same `SOURCEMANAGER_PORT` in `.env`;
-Compose uses it for both the container and host port. If a managed service must
-be reachable from the host, uncomment or add its port under `ports` in
-`compose.yaml`, for example:
-
-```yaml
-ports:
-  - "${SOURCEMANAGER_PORT}:${SOURCEMANAGER_PORT}"
-  - "3000:3000"
-```
-
-### 2. Build and start
-
-```bash
-docker compose --env-file .env --env-file .env.docker up -d --build
-docker compose --env-file .env --env-file .env.docker ps
-docker compose --env-file .env --env-file .env.docker logs -f sourcemanager
-```
-
-Open `http://localhost:17106` (or your configured port). Check the health
-endpoint with:
-
-```bash
-curl http://localhost:17106/health
-```
-
-### 3. Start automatically with Docker Desktop
-
-In Docker Desktop, enable **Settings → General → Start Docker Desktop when you
-sign in**. The Compose service already has `restart: unless-stopped`, so after
-the first `docker compose up -d`, Docker restarts it whenever Docker Desktop
-starts.
-
-Important behavior:
-
-- `docker compose stop` deliberately marks the container as stopped, so it will
-  not auto-start again. Run `docker compose up -d` to re-enable it.
-- `docker compose down` removes the container. Run `docker compose up -d` to
-  recreate it; `data/` and the managed repositories remain on the host.
-- SourceManager starts managed services **inside this container**, not directly
-  on the Windows/macOS host. Their repository paths and health URLs must be
-  valid from inside the container.
-- After changing `.env` or `data/projects.json`, recreate the container with
-  `docker compose up -d --force-recreate`.
+The task only starts SourceManager. Managed applications remain controlled
+through the dashboard or lifecycle API.
 
 ---
 
-## Running on Windows Login
+## Network and Tailscale Access
 
-To have SourceManager start automatically when you log into your Windows 11 dev machine, register it as a scheduled task that triggers on user logon. This keeps it running in the background without requiring a third-party service manager.
+Managed applications now run directly on Windows at their configured ports.
+The loopback targets in the
+[Current LocalDev Service Map](docs/features/SO-6C-tailscale-services-named-services.md#current-localdev-service-map)
+remain unchanged and are suitable for Tailscale Services hosted by the same
+machine.
 
-**1. Build the frontend** (if you haven't already)
+Native hosting does not automatically make an application reachable directly
+from your LAN:
 
-```powershell
-bun run frontend:build
-```
+- A service bound to `127.0.0.1` is available locally and to same-host Tailscale
+  forwarding, but not directly to another LAN device.
+- Direct LAN access requires that application to bind to `0.0.0.0` or the
+  Windows LAN address.
+- Windows Defender Firewall must allow only the required TCP port, preferably
+  on the Private network profile.
+- SourceManager does not change application bind addresses or firewall rules.
 
-**2. Create the scheduled task**
+Verify named Tailscale HTTPS services from a second Tailnet device because the
+service-host machine may not be able to access a Service it hosts through that
+Service's hostname.
 
-Open PowerShell as Administrator and run:
+### Migrating from the removed Docker runtime
 
-```powershell
-$action = New-ScheduledTaskAction `
-  -Execute "bun" `
-  -Argument "run src/index.ts" `
-  -WorkingDirectory "C:\LocalDev\Projects\SourceManager"
-
-$trigger = New-ScheduledTaskTrigger -AtLogon
-
-$settings = New-ScheduledTaskSettingsSet `
-  -ExecutionTimeLimit ([TimeSpan]::Zero) `
-  -RestartCount 3 `
-  -RestartInterval (New-TimeSpan -Minutes 1)
-
-Register-ScheduledTask `
-  -TaskName "SourceManager" `
-  -Action $action `
-  -Trigger $trigger `
-  -Settings $settings `
-  -RunLevel Highest `
-  -Force
-```
-
-Adjust `-WorkingDirectory` to match wherever you cloned the repo.
-
-**3. Start it now** (without logging out)
+If an older SourceManager container still exists, stop and remove it before
+installing the Windows startup task:
 
 ```powershell
-Start-ScheduledTask -TaskName "SourceManager"
+docker stop sourcemanager
+docker rm sourcemanager
 ```
 
-Visit `http://localhost:17106` to confirm the dashboard is up.
+Skip these commands if the old container has already been taken down. Removing
+the container does not remove host repositories or SourceManager's host data.
+Disable Docker Desktop at logon only if no other project needs it.
 
-**Managing the task**
-
-```powershell
-# Stop the service
-Stop-ScheduledTask -TaskName "SourceManager"
-
-# Start the service
-Start-ScheduledTask -TaskName "SourceManager"
-
-# Remove the task entirely
-Unregister-ScheduledTask -TaskName "SourceManager" -Confirm:$false
-
-# View task status
-Get-ScheduledTask -TaskName "SourceManager" | Get-ScheduledTaskInfo
-```
-
-The task runs as your own user account, so it has access to the same filesystem, PATH, and Git credentials that your normal session uses. `bun` must be available in the system PATH — confirm with `where bun` in a new PowerShell window.
-
-> **Tip:** If you want to update SourceManager itself via the API, make sure the scheduled
-> task uses `bun run src/index.ts` (the production entry point, not `--watch`). The API's
-> `restartMode` controls will handle the restart after a `git pull`.
+Update `.env` so `SOURCEMANAGER_WORKSPACE_PATH` points directly to the Windows
+repository directory. Remove any old `.env.local` override that points to
+`/workspace/projects`.
 
 ---
 
@@ -406,7 +291,7 @@ The token value is never returned.
 ```
 Returns `{ "validation": { "valid": true, "errors": [], "warnings": [] }, "diff": { "changeCount": 2, "changes": [...] } }`.
 
-**POST `/v1/config/apply`** — validates and atomically writes (temp file + rename).  
+**POST `/v1/config/apply`** — validates and atomically writes (temp file + rename).
 Returns `{ "success": true, "changeCount": 2 }` or `422` with validation errors.
 
 **Security guarantees:**
@@ -435,7 +320,6 @@ Runtime values are configured in environment files:
 |----------|-------------|
 | `SOURCEMANAGER_PORT` | API and production dashboard port |
 | `SOURCEMANAGER_TOKEN` | Shared token expected in `X-DevServer-Token` |
-| `SOURCEMANAGER_HOST_WORKSPACE_PATH` | Absolute host directory mounted by Docker |
 | `SOURCEMANAGER_WORKSPACE_PATH` | Absolute workspace visible to the running process |
 
 ### Repo fields
@@ -507,10 +391,10 @@ Services transition through four states: `starting` → `running` | `failed`, or
 The project has two test runners:
 
 ```bash
-bun run test           # bun:test — config, middleware, services, routes (97 tests)
-bun run test:vitest    # Vitest — backend + frontend tests (81 tests)
-bun run test:frontend  # Vitest frontend only (38 tests, jsdom)
-bun run test:backend   # Vitest backend only (43 tests, node)
+bun run test           # bun:test — config, middleware, services, routes (103 tests)
+bun run test:vitest    # Vitest — backend + frontend tests (141 tests)
+bun run test:frontend  # Vitest frontend only (54 tests, jsdom)
+bun run test:backend   # Vitest backend only (87 tests, node)
 bun run test:all       # all suites in sequence
 ```
 
@@ -536,7 +420,7 @@ Vitest runs separately to cover the backend config accessors, ProcessManager lif
 | `tests/vitest/routes/repos.test.ts` | Vitest/node | All 7 repos route handlers (GET list/detail/service/logs, POST start/stop/restart) |
 | `frontend/src/__tests__/client.test.ts` | Vitest/jsdom | API client: token helpers, auth errors, request headers, response parsing |
 | `frontend/src/__tests__/Settings.test.tsx` | Vitest/jsdom | Token form: save, test-connection, sign-out |
-| `frontend/src/__tests__/LifecycleBadge.test.tsx` | Vitest/jsdom | Badge label and colour class for all four lifecycle states |
+| `frontend/src/__tests__/LifecycleBadge.test.tsx` | Vitest/jsdom | Badge label and colour class for all five lifecycle states |
 | `frontend/src/__tests__/ActionButton.test.tsx` | Vitest/jsdom | Loading state, disabled state, variant classes |
 | `frontend/src/__tests__/ServiceCard.test.tsx` | Vitest/jsdom | Action dispatch, pending-action lock, error display, Tailnet URL |
 | `frontend/src/__tests__/RepoList.test.tsx` | Vitest/jsdom | Fetch on mount, 10 s polling, AuthError/ApiError banners, action wiring |
@@ -564,7 +448,7 @@ src/
     update.ts           POST /v1/repos/:repoId/services/:serviceId/update
     health.ts           GET /health
   services/
-    processManager.ts   Lifecycle state machine (starting/running/stopped/failed)
+    processManager.ts   Lifecycle state machine (starting/running/stopping/stopped/failed)
     git.ts              Git operations (status, checkout, pull, diff)
     healthCheck.ts      Health URL polling (ping and full modes)
     installer.ts        Package install with lockfile detection
@@ -597,6 +481,9 @@ data/
   projects.json         Your config (gitignored)
   state.json            Process state (gitignored)
   logs/                 NDJSON logs (gitignored)
+
+scripts/
+  SourceManagerStartup.ps1  Windows logon task install/start/stop/status utility
 
 docs/
   SPECIFICATION.md      Design specification

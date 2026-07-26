@@ -41,7 +41,7 @@ vi.mock("../../../src/services/configEditor", () => ({
 
 vi.mock("../../../src/config", () => ({
   getConfig: vi.fn(() => ({
-    workspacePath: "/workspace/projects",
+    workspacePath: "/localdev/projects",
     server: { port: 17106, token: "secret", frontendPort: 17116, allowedIps: [] },
     repos: [],
   })),
@@ -75,7 +75,7 @@ describe("GET /v1/config", () => {
     const body = await res.json()
     expect(body.config).toBeDefined()
     expect(body.runtime.port).toBe(17106)
-    expect(body.runtime.workspacePath).toBe("/workspace/projects")
+    expect(body.runtime.workspacePath).toBe("/localdev/projects")
     expect(body.runtime.tokenConfigured).toBe(true)
     expect(body.config.server).not.toHaveProperty("token")
     expect(JSON.stringify(body)).not.toContain("secret")

@@ -273,13 +273,13 @@ describe("environment configuration and repo resolution", () => {
     const result = loadEnvironmentConfig({
       SOURCEMANAGER_PORT: "18080",
       SOURCEMANAGER_TOKEN: "environment-token",
-      SOURCEMANAGER_WORKSPACE_PATH: "/workspace/projects",
+      SOURCEMANAGER_WORKSPACE_PATH: "/localdev/projects",
     })
 
     expect(result).toEqual({
       port: 18080,
       token: "environment-token",
-      workspacePath: "/workspace/projects",
+      workspacePath: "/localdev/projects",
     })
   })
 
@@ -310,14 +310,14 @@ describe("environment configuration and repo resolution", () => {
   it("resolves the same repo path beneath different workspaces", () => {
     const local = validConfig()
     local.workspacePath = "/Users/example/projects"
-    const docker = validConfig()
-    docker.workspacePath = "/workspace/projects"
+    const secondLocalMachine = validConfig()
+    secondLocalMachine.workspacePath = "/localdev/projects"
 
     resolveRepoPaths(local)
-    resolveRepoPaths(docker)
+    resolveRepoPaths(secondLocalMachine)
 
     expect(local.repos[0].repoPath).toBe("/Users/example/projects/my-app")
-    expect(docker.repos[0].repoPath).toBe("/workspace/projects/my-app")
+    expect(secondLocalMachine.repos[0].repoPath).toBe("/localdev/projects/my-app")
   })
 
   it("rejects absolute and escaping repo paths", () => {

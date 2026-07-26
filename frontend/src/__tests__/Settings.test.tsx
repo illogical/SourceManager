@@ -98,7 +98,7 @@ describe("Settings — authenticated view", () => {
     },
     runtime: {
       port: 17106,
-      workspacePath: "/workspace/projects",
+      workspacePath: "/localdev/projects",
       tokenConfigured: true,
     },
   }
@@ -137,7 +137,7 @@ describe("Settings — authenticated view", () => {
     vi.spyOn(client, "getEditableConfig").mockResolvedValue(mockConfig)
     render(<Settings />)
 
-    expect(await screen.findByText("/workspace/projects")).toBeInTheDocument()
+    expect(await screen.findByText("/localdev/projects")).toBeInTheDocument()
     expect(screen.getByText("17106")).toBeInTheDocument()
     expect(screen.queryByRole("spinbutton", { name: /api port/i })).not.toBeInTheDocument()
   })

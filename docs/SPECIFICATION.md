@@ -99,8 +99,7 @@ related: []
 | `server.allowedIps` | No | `[]` | Global CIDR IP allowlist (empty = all IPs allowed) |
 
 Required runtime environment values are `SOURCEMANAGER_PORT`,
-`SOURCEMANAGER_TOKEN`, and `SOURCEMANAGER_WORKSPACE_PATH`. Docker Compose also
-uses `SOURCEMANAGER_HOST_WORKSPACE_PATH` as the bind-mount source.
+`SOURCEMANAGER_TOKEN`, and `SOURCEMANAGER_WORKSPACE_PATH`.
 
 ### Repo fields
 
