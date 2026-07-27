@@ -1,4 +1,4 @@
-import { defineConfig } from "vite"
+import { defineConfig, loadEnv } from "vite"
 import react from "@vitejs/plugin-react"
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
@@ -17,8 +17,8 @@ function readFrontendPort(): number {
   return typeof raw.server?.frontendPort === "number" ? raw.server.frontendPort : 5173
 }
 
-function readBackendPort(): number {
-  const raw = process.env.SOURCEMANAGER_PORT?.trim()
+function readBackendPort(env: Record<string, string>): number {
+  const raw = env.SOURCEMANAGER_PORT?.trim()
   if (!raw || !/^\d+$/.test(raw)) {
     throw new Error("SOURCEMANAGER_PORT must be set to an integer between 1 and 65535")
   }
@@ -29,10 +29,11 @@ function readBackendPort(): number {
   return port
 }
 
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
   const frontendPort = readFrontendPort()
+  const env = loadEnv(mode, resolve(__dirname, ".."), "")
   const backendUrl = command === "serve"
-    ? `http://localhost:${readBackendPort()}`
+    ? `http://localhost:${readBackendPort(env)}`
     : "http://localhost"
 
   return {

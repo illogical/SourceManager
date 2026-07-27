@@ -146,7 +146,9 @@ terminal shows both the backend and Vite output. It does not store your Windows
 password or SourceManager token, and it does not require an elevated task.
 
 Install dependencies and create `.env` and `data/projects.json` before
-registering the task. Then run:
+registering the task. Run `bun install` again after pulling dependency changes;
+the existing Scheduled Task does not need to be reinstalled for application
+updates. Then run:
 
 ```powershell
 # Register or update the at-logon task
