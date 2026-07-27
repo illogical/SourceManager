@@ -1,4 +1,4 @@
-import { render, screen, act } from "@testing-library/react"
+import { render, screen, act, within } from "@testing-library/react"
 import { vi, beforeEach } from "vitest"
 import RepoList from "../components/RepoList"
 import * as client from "../api/client"
@@ -61,6 +61,19 @@ describe("RepoList", () => {
 
     expect(screen.getByText("Stopping")).toBeInTheDocument()
     expect(screen.getAllByText("1").length).toBeGreaterThan(0)
+  })
+
+  it("hides zero-value project status counts", async () => {
+    vi.spyOn(client, "listRepos").mockResolvedValue({ repos: [makeRepo("epsilon")] })
+
+    await act(async () => { render(<RepoList />) })
+
+    const projectCounts = screen.getByLabelText("Repo epsilon status counts")
+    expect(within(projectCounts).getByText("Stopped")).toBeInTheDocument()
+    expect(within(projectCounts).queryByText("Running")).not.toBeInTheDocument()
+    expect(within(projectCounts).queryByText("Starting")).not.toBeInTheDocument()
+    expect(within(projectCounts).queryByText("Stopping")).not.toBeInTheDocument()
+    expect(within(projectCounts).queryByText("Failed")).not.toBeInTheDocument()
   })
 
   it("shows error banner on AuthError", async () => {

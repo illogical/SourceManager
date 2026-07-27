@@ -131,6 +131,17 @@
   color: #d8c7ff;
   border-color: rgba(168, 139, 250, 0.16);
   background: rgba(168, 139, 250, 0.09);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(6px);
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.card:hover .tag,
+.card:focus-within .tag {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
 }
 
 .tailnet {
@@ -187,7 +198,8 @@
 }
 
 @media (hover: none) {
-  .controls {
+  .controls,
+  .tag {
     opacity: 1;
     pointer-events: auto;
     transform: none;
