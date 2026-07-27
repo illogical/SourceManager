@@ -51,6 +51,12 @@ export default defineConfig(({ command, mode }) => {
         "/health": backendUrl,
         "/swagger": backendUrl,
       },
+      allowedHosts: [
+        'localhost',
+        '127.0.0.1',
+        'devplanner',
+        'devplanner.bangus-city.ts.net',
+      ],
     },
   }
 })
