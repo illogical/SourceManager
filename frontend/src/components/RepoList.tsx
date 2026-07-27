@@ -175,12 +175,14 @@ export default function RepoList() {
                   <h2 className={styles.repoName}>{repo.displayName}</h2>
                 </div>
                 <div className={styles.repoCounts} aria-label={`${repo.displayName} status counts`}>
-                  {Object.entries(counts).map(([state, count]) => (
-                    <span key={state} className={styles.stateCount} data-state={state}>
-                      {count}
-                      <span>{STATE_LABELS[state as LifecycleState]}</span>
-                    </span>
-                  ))}
+                  {Object.entries(counts)
+                    .filter(([, count]) => count > 0)
+                    .map(([state, count]) => (
+                      <span key={state} className={styles.stateCount} data-state={state}>
+                        {count}
+                        <span>{STATE_LABELS[state as LifecycleState]}</span>
+                      </span>
+                    ))}
                 </div>
               </header>
               <div className={styles.services}>

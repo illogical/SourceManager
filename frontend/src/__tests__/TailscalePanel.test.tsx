@@ -22,7 +22,7 @@ function status(overrides: Partial<TailscaleServiceCheck> = {}): TailscaleServic
 }
 
 describe("TailscalePanel", () => {
-  it("shows the named URL, target, and connected state", () => {
+  it("shows the named URL, service name, and connected state without the local target", () => {
     render(
       <TailscalePanel
         lifecycleState="running"
@@ -33,7 +33,8 @@ describe("TailscalePanel", () => {
     )
     expect(screen.getByText("Available")).toBeInTheDocument()
     expect(screen.getByText("devplanner-api.bangus-city.ts.net")).toBeInTheDocument()
-    expect(screen.getByText(/127\.0\.0\.1:17103/)).toBeInTheDocument()
+    expect(screen.getByText("svc:devplanner-api")).toBeInTheDocument()
+    expect(screen.queryByText(/127\.0\.0\.1:17103/)).not.toBeInTheDocument()
   })
 
   it("turns the desired state off when the checked switch is clicked", () => {
@@ -50,7 +51,7 @@ describe("TailscalePanel", () => {
     expect(onToggle).toHaveBeenCalledWith(false)
   })
 
-  it("keeps a desired-on switch checked but disabled while stopped", () => {
+  it("keeps a desired-on switch checked and disabled without a repeated instruction while stopped", () => {
     render(
       <TailscalePanel
         lifecycleState="stopped"
@@ -62,7 +63,8 @@ describe("TailscalePanel", () => {
     const toggle = screen.getByRole("switch", { name: "Tailnet exposure" })
     expect(toggle).toBeChecked()
     expect(toggle).toBeDisabled()
-    expect(screen.getByText(/will be restored when the service starts/i)).toBeInTheDocument()
+    expect(screen.queryByText(/start the service/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/will be restored/i)).not.toBeInTheDocument()
   })
 
   it("renders cleanup warnings", () => {

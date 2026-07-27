@@ -104,11 +104,22 @@
 
 .stackInfo {
   display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 7px;
   min-width: 150px;
   max-width: 280px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(6px);
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.tagList {
+  display: flex;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 7px;
 }
 
 .infoPill,
@@ -131,6 +142,13 @@
   color: #d8c7ff;
   border-color: rgba(168, 139, 250, 0.16);
   background: rgba(168, 139, 250, 0.09);
+}
+
+.card:hover .stackInfo,
+.card:focus-within .stackInfo {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
 }
 
 .tailnet {
@@ -187,7 +205,8 @@
 }
 
 @media (hover: none) {
-  .controls {
+  .controls,
+  .stackInfo {
     opacity: 1;
     pointer-events: auto;
     transform: none;
@@ -206,7 +225,7 @@
   }
 
   .stackInfo {
-    justify-content: flex-start;
+    align-items: flex-start;
   }
 
   .controls {

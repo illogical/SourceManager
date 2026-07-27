@@ -46,6 +46,27 @@ describe("ServiceCard", () => {
     expect(screen.getByText(/3000/)).toBeInTheDocument()
   })
 
+  it("groups tags together below the service command", () => {
+    render(
+      <ServiceCard
+        repoId="my-repo"
+        service={makeService({ tags: ["api", "backend"] })}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onRestart={vi.fn()}
+        onUpdate={vi.fn()}
+      />
+    )
+
+    const command = screen.getByText("bun dev")
+    const firstTag = screen.getByText("api")
+    const secondTag = screen.getByText("backend")
+    const tagList = firstTag.parentElement
+
+    expect(tagList).toBe(secondTag.parentElement)
+    expect(tagList?.previousElementSibling).toBe(command)
+  })
+
   it("shows the lifecycle badge", () => {
     render(
       <ServiceCard

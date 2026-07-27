@@ -39,15 +39,11 @@ export default function TailscalePanel({ lifecycleState, status, pending, onTogg
   const operationLabel = status.operation
     ? `${status.operation[0].toUpperCase()}${status.operation.slice(1)}…`
     : null
-  const reason = !running
-    ? status.desiredEnabled
-      ? "Tailnet will be restored when the service starts"
-      : "Start the service before changing Tailnet"
-    : status.status === "unavailable"
-      ? "Tailscale is unavailable on the host"
-      : status.status === "pending_approval"
-        ? "Awaiting administrator approval"
-        : undefined
+  const reason = running && status.status === "unavailable"
+    ? "Tailscale is unavailable on the host"
+    : status.status === "pending_approval"
+      ? "Awaiting administrator approval"
+      : undefined
 
   return (
     <section className={styles.panel} aria-label="Tailnet">
@@ -78,15 +74,13 @@ export default function TailscalePanel({ lifecycleState, status, pending, onTogg
       </div>
 
       <div className={styles.details}>
-        {status.expectedUrl ? (
+        {status.expectedUrl && (
           <a href={status.expectedUrl} target="_blank" rel="noreferrer">
             {status.expectedUrl.replace(/^https:\/\//, "")}
             <ExternalLink aria-hidden size={11} />
           </a>
-        ) : (
-          <span>{status.serviceName}</span>
         )}
-        {status.localTarget && <code>{status.serviceName} → {status.localTarget}</code>}
+        {status.serviceName && <code>{status.serviceName}</code>}
       </div>
 
       {(operationLabel || reason || status.lastWarning || status.lastError) && (
