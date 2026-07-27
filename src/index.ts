@@ -2,15 +2,24 @@ import Elysia, { NotFoundError } from "elysia"
 import { swagger } from "@elysiajs/swagger"
 import { staticPlugin } from "@elysiajs/static"
 import { loadConfig } from "./config"
+import { getService } from "./config"
 import { requestLoggerMiddleware } from "./middleware/requestLogger"
 import { healthRoute } from "./routes/health"
 import { reposRoute } from "./routes/repos"
 import { updateRoute } from "./routes/update"
 import { configRoute } from "./routes/config"
+import { tailscaleRoute } from "./routes/tailscale"
 import { processManager } from "./services/processManager"
 import { rotateOldLogs } from "./services/runLogger"
 import { RepoNotFoundError, ServiceNotFoundError } from "./config"
 import { validateToken } from "./middleware/auth"
+import { checkHealth } from "./services/healthCheck"
+import {
+  prepareTailscaleForStop,
+  restoreTailscaleWhenReady,
+  getNamedServiceConfig,
+  tailscaleExecutor,
+} from "./services/tailscale"
 
 // ── Startup ────────────────────────────────────────────────────────────────
 
@@ -21,6 +30,28 @@ await Bun.write("data/logs/.keep", "")
 
 // Init process manager (restore state, prune stale PIDs)
 await processManager.init()
+
+processManager._onUnexpectedExit = async (serviceId) => {
+  const found = getService(serviceId)
+  if (found) await prepareTailscaleForStop(found.service, tailscaleExecutor)
+}
+
+// Reconcile without blocking API startup. Healthy desired-on services are
+// restored; stopped services are left drained.
+for (const repo of config.repos) {
+  for (const service of repo.services) {
+    void checkHealth(service).then(async (health) => {
+      const named = getNamedServiceConfig(service)
+      if (health.status === "pass" && named?.desiredEnabled) {
+        await restoreTailscaleWhenReady(service, async () => true, tailscaleExecutor, 1, 0)
+      } else if (health.status === "fail") {
+        await prepareTailscaleForStop(service, tailscaleExecutor)
+      }
+    }).catch((err) => {
+      console.warn(`[Tailscale] Startup reconciliation failed for "${service.id}": ${(err as Error).message}`)
+    })
+  }
+}
 
 // Rotate old logs (keep 7 days)
 await rotateOldLogs()
@@ -44,6 +75,7 @@ const app = new Elysia()
           { name: "Projects", description: "Project listing and status" },
           { name: "Update", description: "Git update workflow" },
           { name: "Lifecycle", description: "Process start/stop/restart" },
+          { name: "Tailscale", description: "Named Tailnet Service status and controls" },
         ],
       },
     })
@@ -94,6 +126,7 @@ const app = new Elysia()
       .use(reposRoute)
       .use(updateRoute)
       .use(configRoute)
+      .use(tailscaleRoute)
   )
 
   // Error handling

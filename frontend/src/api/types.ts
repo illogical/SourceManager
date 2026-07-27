@@ -20,6 +20,50 @@ export interface TailnetInfo {
   serveEnabled: boolean
   serveMode: "https" | null
   serveTarget: string | null
+  exposureMode?: "tailscale-service" | null
+  serviceName?: string | null
+  serviceEnabled?: boolean
+  servicePort?: number | null
+  serviceTarget?: string | null
+}
+
+export type TailscaleServiceStatus =
+  | "not_configured"
+  | "unavailable"
+  | "local_stopped"
+  | "not_advertised"
+  | "pending_approval"
+  | "draining"
+  | "connected"
+  | "mismatch"
+  | "error"
+
+export interface TailscaleMachineStatus {
+  state: "connected" | "degraded" | "unavailable"
+  backendState: string | null
+  tailnetDomain: string | null
+  tags: string[]
+  error: string | null
+}
+
+export interface TailscaleServiceCheck {
+  serviceId: string
+  configured: boolean
+  desiredEnabled: boolean
+  serviceName: string | null
+  expectedUrl: string | null
+  localTarget: string | null
+  httpsPort: number | null
+  status: TailscaleServiceStatus
+  lastError: string | null
+  lastWarning: string | null
+  operation: "enabling" | "draining" | "disabling" | null
+  canToggle: boolean
+}
+
+export interface TailscaleStatusResponse {
+  machine: TailscaleMachineStatus
+  services: TailscaleServiceCheck[]
 }
 
 // ── Service ────────────────────────────────────────────────────────────────────
@@ -90,6 +134,12 @@ export interface EditableServiceConfig {
   tailscaleServeEnabled?: boolean
   tailscaleServeMode?: "https"
   tailscaleServeTarget?: string
+  tailnetExposureMode?: "tailscale-service"
+  tailscaleServiceName?: string
+  tailscaleServiceEnabled?: boolean
+  tailscaleServiceProtocol?: "https"
+  tailscaleServicePort?: number
+  tailscaleServiceTarget?: string
 }
 
 export interface EditableRepoConfig {

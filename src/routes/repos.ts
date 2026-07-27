@@ -3,6 +3,11 @@ import { getConfig, requireRepo, requireService } from "../config"
 import { processManager } from "../services/processManager"
 import { checkHealth } from "../services/healthCheck"
 import { readRecentLogs } from "../services/runLogger"
+import {
+  prepareTailscaleForStop,
+  restoreTailscaleWhenReady,
+  tailscaleExecutor,
+} from "../services/tailscale"
 import type { LifecycleState, ServiceConfig } from "../types"
 
 interface ServiceLifecycle {
@@ -60,13 +65,20 @@ function buildServiceSummary(service: ServiceConfig, lifecycle: ServiceLifecycle
 }
 
 function buildTailnet(service: ServiceConfig) {
-  if (!service.tailnetHostname) return null
+  if (!service.tailnetHostname && !service.tailscaleServiceName) return null
   return {
-    hostname: service.tailnetHostname,
+    hostname: service.tailnetHostname ?? service.tailscaleServiceName ?? "",
     domain: service.tailnetDomain ?? null,
     serveEnabled: service.tailscaleServeEnabled ?? false,
     serveMode: service.tailscaleServeMode ?? null,
     serveTarget: service.tailscaleServeTarget ?? null,
+    exposureMode: service.tailnetExposureMode ?? (
+      service.tailnetHostname && service.tailscaleServeTarget ? "tailscale-service" : null
+    ),
+    serviceName: service.tailscaleServiceName ?? service.tailnetHostname ?? null,
+    serviceEnabled: service.tailscaleServiceEnabled ?? service.tailscaleServeEnabled ?? false,
+    servicePort: service.tailscaleServicePort ?? 443,
+    serviceTarget: service.tailscaleServiceTarget ?? service.tailscaleServeTarget ?? null,
   }
 }
 
@@ -153,6 +165,13 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
       const result = await processManager.start(repo, service)
+      if (result.success) {
+        void restoreTailscaleWhenReady(
+          service,
+          async () => (await checkHealth(service)).status === "pass",
+          tailscaleExecutor,
+        )
+      }
       if (!result.success) set.status = 500
       return {
         serviceId: service.id,
@@ -176,6 +195,7 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
     async ({ params, set }) => {
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
+      const tailnetPreparation = await prepareTailscaleForStop(service, tailscaleExecutor)
       const result = await processManager.stop(service, repo)
       if (!result.success) set.status = 500
       return {
@@ -185,6 +205,7 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
         alreadyStopped: result.alreadyStopped,
         message: result.message,
         diagnostics: result.diagnostics ?? null,
+        tailnetPreparation,
         lifecycle: await buildLifecycle(service),
       }
     },
@@ -200,7 +221,15 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
     async ({ params, set }) => {
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
+      const tailnetPreparation = await prepareTailscaleForStop(service, tailscaleExecutor)
       const result = await processManager.restart(repo, service)
+      if (result.success) {
+        void restoreTailscaleWhenReady(
+          service,
+          async () => (await checkHealth(service)).status === "pass",
+          tailscaleExecutor,
+        )
+      }
       if (!result.success) set.status = 500
       return {
         serviceId: service.id,
@@ -209,6 +238,7 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
         message: result.message,
         diagnostics: result.diagnostics ?? null,
         portKillResult: result.portKillResult ?? null,
+        tailnetPreparation,
         lifecycle: await buildLifecycle(service),
       }
     },

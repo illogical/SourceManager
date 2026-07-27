@@ -117,6 +117,23 @@ function validateDraft(draft: EditableConfig, newIds: Set<string>): Record<strin
       if (svc.tailscaleServeTarget && !isValidUrl(svc.tailscaleServeTarget)) {
         errors[`${sp}.tailscaleServeTarget`] = "Valid http:// or https:// URL required"
       }
+      if (svc.tailscaleServiceName && !SUBDOMAIN_RE.test(svc.tailscaleServiceName)) {
+        errors[`${sp}.tailscaleServiceName`] = "Lowercase letters, digits, and hyphens only"
+      }
+      if (svc.tailscaleServiceTarget && !isValidUrl(svc.tailscaleServiceTarget)) {
+        errors[`${sp}.tailscaleServiceTarget`] = "Valid http:// or https:// URL required"
+      }
+      if (svc.tailscaleServicePort !== undefined && (
+        !Number.isInteger(svc.tailscaleServicePort)
+        || svc.tailscaleServicePort < 1
+        || svc.tailscaleServicePort > 65535
+      )) {
+        errors[`${sp}.tailscaleServicePort`] = "Integer 1–65535"
+      }
+      if (svc.tailscaleServiceEnabled) {
+        if (!svc.tailscaleServiceName) errors[`${sp}.tailscaleServiceName`] = "Required when Tailnet exposure is enabled"
+        if (!svc.tailscaleServiceTarget) errors[`${sp}.tailscaleServiceTarget`] = "Required when Tailnet exposure is enabled"
+      }
     }
   }
 
@@ -865,71 +882,79 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
                             <div className={styles.fieldGroup}>
                               <div className={styles.fieldsRow}>
                                 <Field
-                                  label="Tailnet Hostname"
-                                  path={`${sp}.tailnetHostname`}
-                                  error={fieldErrors[`${sp}.tailnetHostname`]}
-                                  hint="Subdomain only (e.g. myapp)"
+                                  label="Tailscale Service Name"
+                                  path={`${sp}.tailscaleServiceName`}
+                                  error={fieldErrors[`${sp}.tailscaleServiceName`]}
+                                  hint="Without svc: (e.g. myapp-api)"
                                 >
                                   <input
-                                    className={`${styles.input} ${styles.inputMono} ${fieldErrors[`${sp}.tailnetHostname`] ? styles.inputError : ""}`}
+                                    className={`${styles.input} ${styles.inputMono} ${fieldErrors[`${sp}.tailscaleServiceName`] ? styles.inputError : ""}`}
                                     type="text"
-                                    placeholder="myapp"
-                                    value={svc.tailnetHostname ?? ""}
-                                    onChange={(e) => setServiceField(i, j, "tailnetHostname", e.target.value || undefined)}
+                                    placeholder="myapp-api"
+                                    value={svc.tailscaleServiceName ?? svc.tailnetHostname ?? ""}
+                                    onChange={(e) => {
+                                      setServiceField(i, j, "tailnetExposureMode", "tailscale-service")
+                                      setServiceField(i, j, "tailscaleServiceName", e.target.value || undefined)
+                                    }}
                                   />
                                 </Field>
                                 <Field
-                                  label="Tailnet Domain"
-                                  path={`${sp}.tailnetDomain`}
-                                  error={fieldErrors[`${sp}.tailnetDomain`]}
-                                  hint="e.g. bangus-city.ts.net"
+                                  label="Local Target"
+                                  path={`${sp}.tailscaleServiceTarget`}
+                                  error={fieldErrors[`${sp}.tailscaleServiceTarget`]}
+                                  hint="Loopback URL proxied by Tailscale"
                                 >
                                   <input
-                                    className={`${styles.input} ${styles.inputMono} ${fieldErrors[`${sp}.tailnetDomain`] ? styles.inputError : ""}`}
+                                    className={`${styles.input} ${styles.inputMono} ${fieldErrors[`${sp}.tailscaleServiceTarget`] ? styles.inputError : ""}`}
                                     type="text"
-                                    placeholder="bangus-city.ts.net"
-                                    value={svc.tailnetDomain ?? ""}
-                                    onChange={(e) => setServiceField(i, j, "tailnetDomain", e.target.value || undefined)}
+                                    placeholder="http://127.0.0.1:3000"
+                                    value={svc.tailscaleServiceTarget ?? svc.tailscaleServeTarget ?? ""}
+                                    onChange={(e) => {
+                                      setServiceField(i, j, "tailnetExposureMode", "tailscale-service")
+                                      setServiceField(i, j, "tailscaleServiceTarget", e.target.value || undefined)
+                                    }}
                                   />
                                 </Field>
                               </div>
                               <div className={styles.fieldsRow3}>
                                 <Field
-                                  label="Serve Target"
-                                  path={`${sp}.tailscaleServeTarget`}
-                                  error={fieldErrors[`${sp}.tailscaleServeTarget`]}
-                                  hint="Local URL to expose"
-                                >
-                                  <input
-                                    className={`${styles.input} ${styles.inputMono} ${fieldErrors[`${sp}.tailscaleServeTarget`] ? styles.inputError : ""}`}
-                                    type="text"
-                                    placeholder="http://localhost:3000"
-                                    value={svc.tailscaleServeTarget ?? ""}
-                                    onChange={(e) => setServiceField(i, j, "tailscaleServeTarget", e.target.value || undefined)}
-                                  />
-                                </Field>
-                                <Field
-                                  label="Serve Mode"
-                                  path={`${sp}.tailscaleServeMode`}
+                                  label="Exposure Mode"
+                                  path={`${sp}.tailnetExposureMode`}
                                 >
                                   <select
                                     className={styles.select}
-                                    value={svc.tailscaleServeMode ?? "https"}
-                                    onChange={(e) =>
-                                      setServiceField(i, j, "tailscaleServeMode", e.target.value as "https")
-                                    }
+                                    value={svc.tailnetExposureMode ?? "tailscale-service"}
+                                    onChange={() => setServiceField(i, j, "tailnetExposureMode", "tailscale-service")}
                                   >
-                                    <option value="https">https</option>
+                                    <option value="tailscale-service">Named Tailscale Service</option>
                                   </select>
                                 </Field>
-                                <Field label="Serve Enabled" path={`${sp}.tailscaleServeEnabled`}>
+                                <Field
+                                  label="HTTPS Port"
+                                  path={`${sp}.tailscaleServicePort`}
+                                  error={fieldErrors[`${sp}.tailscaleServicePort`]}
+                                >
+                                  <input
+                                    className={inputClass(fieldErrors[`${sp}.tailscaleServicePort`])}
+                                    type="number"
+                                    min={1}
+                                    max={65535}
+                                    value={svc.tailscaleServicePort ?? 443}
+                                    onChange={(e) => setServiceField(i, j, "tailscaleServicePort", parseInt(e.target.value) || 0)}
+                                  />
+                                </Field>
+                                <Field label="Desired Tailnet Exposure" path={`${sp}.tailscaleServiceEnabled`}>
                                   <label className={styles.checkboxLabel}>
                                     <input
                                       type="checkbox"
-                                      checked={svc.tailscaleServeEnabled ?? false}
-                                      onChange={(e) => setServiceField(i, j, "tailscaleServeEnabled", e.target.checked)}
+                                      checked={svc.tailscaleServiceEnabled ?? svc.tailscaleServeEnabled ?? false}
+                                      onChange={(e) => {
+                                        setServiceField(i, j, "tailnetExposureMode", "tailscale-service")
+                                        setServiceField(i, j, "tailscaleServiceProtocol", "https")
+                                        setServiceField(i, j, "tailscaleServiceEnabled", e.target.checked)
+                                      }}
                                     />
-                                    Enable Tailscale Serve
+                                    Restore Tailnet exposure after service start
                                   </label>
                                 </Field>
                               </div>

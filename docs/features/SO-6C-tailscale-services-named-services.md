@@ -1,6 +1,6 @@
 # SO-6C: Tailscale Services with Named Tailnet Hostnames
 
-**Status:** Alternative implementation plan  
+**Status:** Implemented in repository — deployment verification in progress
 **Use when:** We want clean per-service Tailnet hostnames, each on HTTPS port 443.  
 **Primary tradeoff:** Requires Tailscale Services setup, admin approval, and tag-based service-host identity.
 
@@ -54,8 +54,7 @@ Derived from `data/projects.localdev.example.json`.
 
 | Service ID | Tailscale Service | Public URL | Local Target |
 |---|---|---|---|
-| `sourcemanager-web` | `svc:sourcemanager` | `https://sourcemanager.<tailnet>.ts.net` | `http://127.0.0.1:17116` |
-| `sourcemanager-api` | `svc:sourcemanager-api` | `https://sourcemanager-api.<tailnet>.ts.net` | `http://127.0.0.1:17106` |
+| `sourcemanager-api` | `svc:sourcemanager` | `https://sourcemanager.<tailnet>.ts.net` | `http://127.0.0.1:17106` |
 | `devplanner-web` | `svc:devplanner` | `https://devplanner.<tailnet>.ts.net` | `http://127.0.0.1:5173` |
 | `devplanner-api` | `svc:devplanner-api` | `https://devplanner-api.<tailnet>.ts.net` | `http://127.0.0.1:17103` |
 | `lmapi-api` | `svc:lmapi` | `https://lmapi.<tailnet>.ts.net` | `http://127.0.0.1:3111` |
@@ -79,6 +78,8 @@ This plan requires more than ordinary Tailscale Serve:
 6. Be aware of the documented no-hairpinning limitation: the service-host machine may not be able to access a Service that it hosts through the Service hostname.
 7. Client devices must be granted access to each Service in the tailnet policy file. Auto-approvers only control Service-host advertisement; they do not grant clients permission to connect.
 
+The intended Windows dev machine is reported to be running **Tailscale v1.98.9**. This satisfies the host and modern-client version requirements. This repository is not that machine, so all `tailscale` commands in this document are manual instructions and must not be used as local repository validation.
+
 Recommended tailnet policy setup (verified against [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) documentation, last validated Feb 2, 2026):
 
 ```json
@@ -92,7 +93,6 @@ Recommended tailnet policy setup (verified against [Tailscale Services](https://
   "autoApprovers": {
     "services": {
       "svc:sourcemanager": ["tag:dev-service-host"],
-      "svc:sourcemanager-api": ["tag:dev-service-host"],
       "svc:devplanner": ["tag:dev-service-host"],
       "svc:devplanner-api": ["tag:dev-service-host"],
       "svc:lmapi": ["tag:dev-service-host"],
@@ -108,7 +108,6 @@ Recommended tailnet policy setup (verified against [Tailscale Services](https://
       "src": ["autogroup:member"],
       "dst": [
         "svc:sourcemanager",
-        "svc:sourcemanager-api",
         "svc:devplanner",
         "svc:devplanner-api",
         "svc:lmapi",
@@ -159,7 +158,7 @@ export type TailnetExposureMode = "tailscale-service"
 export interface ServiceConfig {
   tailnetExposureMode?: TailnetExposureMode
   tailscaleServiceName?: string       // without svc:
-  tailscaleServiceEnabled?: boolean
+  tailscaleServiceEnabled?: boolean     // persisted desired on/off state
   tailscaleServiceProtocol?: "https"
   tailscaleServicePort?: number       // default 443
   tailscaleServiceTarget?: string
@@ -177,6 +176,15 @@ https://<tailscaleServiceName>.<tailnetDomain>
 ---
 
 ## CLI Behavior
+
+First verify the combined SourceManager web and API process:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:17106/ -UseBasicParsing
+tailscale serve --service=svc:sourcemanager --https=443 http://127.0.0.1:17106
+```
+
+This publishes both the built dashboard and its `/v1` API through the confirmed `https://sourcemanager.bangus-city.ts.net` named Service.
 
 Enable/configure one Tailscale Service endpoint:
 
@@ -204,6 +212,12 @@ Drain before removing or changing a Service host:
 tailscale serve drain svc:devplanner-api
 ```
 
+Resume a correct configuration after the local service becomes healthy again:
+
+```bash
+tailscale serve advertise svc:devplanner-api
+```
+
 Remove an endpoint:
 
 ```bash
@@ -217,6 +231,19 @@ tailscale serve clear svc:devplanner-api
 ```
 
 Do not use `tailscale serve reset` from SourceManager because it removes all Service configurations on the host.
+
+### Lifecycle semantics
+
+`tailscaleServiceEnabled` records the desired Tailnet state; it is not merely a snapshot of whether the host is currently advertised.
+
+- **Toggle on:** require the local service to be running, persist the desired state, then configure and advertise.
+- **Toggle off:** require the local service to be running, persist the disabled state, drain, then remove the endpoint.
+- **Service stop:** drain first, then immediately begin local process shutdown. Keep the correct endpoint configuration drained and retain the desired state.
+- **Service start:** after health reaches `running`, re-advertise a correct drained configuration when desired, or configure it again if missing or mismatched.
+- **Service restart:** drain, stop, start, wait for health, then re-advertise.
+- **Unexpected exit:** best-effort drain so new Tailnet connections are not routed to a dead process.
+
+Drain and process stop are ordered but use no fixed grace delay. If drain fails, SourceManager attempts endpoint removal, continues local shutdown, and returns a Tailnet cleanup warning. Tailscale failure must not block local lifecycle control.
 
 ---
 
@@ -276,6 +303,7 @@ export async function getTailscaleServiceConfig(executor): Promise<TailscaleServ
 export async function enableTailscaleService(service, executor): Promise<void>
 export async function disableTailscaleService(service, executor): Promise<void>
 export async function drainTailscaleService(service, executor): Promise<void>
+export async function advertiseTailscaleService(service, executor): Promise<void>
 export function checkTailscaleService(service, config, status): TailscaleServiceCheckResult
 ```
 
@@ -307,6 +335,12 @@ Drain command args:
 ["serve", "drain", `svc:${service.tailscaleServiceName}`]
 ```
 
+Advertise command args:
+
+```typescript
+["serve", "advertise", `svc:${service.tailscaleServiceName}`]
+```
+
 Status checks should read both:
 
 - `tailscale serve get-config --all` for desired host-side endpoint mappings.
@@ -322,8 +356,9 @@ Add or adapt:
 GET  /v1/tailscale/status
 POST /v1/tailscale/services/:serviceId/service/enable
 POST /v1/tailscale/services/:serviceId/service/disable
-POST /v1/tailscale/services/:serviceId/service/drain
 ```
+
+Drain remains an internal lifecycle operation rather than a separate user-facing action.
 
 Response should distinguish:
 
@@ -333,11 +368,14 @@ Response should distinguish:
 - Service host advertised/pending approval/connected/offline when detectable
 - expected URL
 - local target URL
+- persisted desired enabled state
+- current Tailnet operation and last cleanup warning
 
 Error statuses:
 
 - `404`: service ID not found.
 - `422`: missing service name, target, or invalid name.
+- `409`: local service is not running when the user tries to change the toggle.
 - `424`: Tailscale Service is not defined or not approved yet when detectable.
 - `503`: Tailscale unavailable.
 - `500`: CLI command failed.
@@ -354,16 +392,17 @@ Service card panel:
 - Show endpoint port, normally `443`.
 - Show state:
   - not configured
-  - configured locally
+  - local service stopped
+  - not advertised
   - pending approval
+  - draining
   - connected
-  - offline
   - mismatch
   - error
-- Actions:
-  - Enable/configure
-  - Drain
-  - Disable endpoint
+- Show one on/off toggle backed by `tailscaleServiceEnabled`.
+- Disable the toggle unless the local lifecycle state is `running`.
+- When stopped with desired state enabled, show the toggle checked but disabled with “Tailnet will be restored when the service starts.”
+- Show enabling, draining, disabling, and cleanup-warning feedback.
 
 Settings UI:
 
@@ -393,6 +432,7 @@ Unit tests:
 - Enable command argument construction.
 - Disable command argument construction.
 - Drain command argument construction.
+- Advertise command argument construction.
 - Parse `tailscale serve get-config --all`.
 - Detect mismatch when local target differs.
 - Detect missing configured endpoint.
@@ -404,21 +444,26 @@ Route tests:
 - Unknown service returns 404.
 - CLI failure returns 500 without leaking shell details.
 - No command contains `funnel`.
+- No command contains `serve reset`.
 - No test invokes a real Tailscale binary.
 
 Frontend tests:
 
 - Clean service URL renders.
 - Pending approval warning renders.
-- Enable/disable/drain buttons call expected API endpoints.
+- Toggle calls the expected enable/disable endpoints.
+- Toggle is disabled for starting, stopping, stopped, and failed local services.
+- Stopped service retains a checked desired state without appearing available.
 
 Manual verification:
 
-- Define `svc:devplanner-api` in Tailscale admin console.
+- Confirm the dev machine reports Tailscale v1.98.9.
+- Define `svc:sourcemanager` in Tailscale admin console with endpoint `tcp:443`.
 - Authenticate the dev machine with `tag:dev-service-host`.
-- Run enable from SourceManager.
+- Confirm `http://127.0.0.1:17106/` responds locally.
+- Advertise `svc:sourcemanager` to `http://127.0.0.1:17106`.
 - Approve host if needed.
-- From another Tailnet device, open `https://devplanner-api.<tailnet>.ts.net/health`.
+- From another Tailnet device, open `https://sourcemanager.<tailnet>.ts.net/` and confirm dashboard API calls work.
 - Confirm host machine hairpin limitation separately; do not require local self-access for pass/fail.
 
 ---
@@ -426,8 +471,13 @@ Manual verification:
 ## Acceptance Criteria
 
 - SourceManager can configure at least two Tailscale Services on the same dev machine, both using HTTPS port 443.
+- `sourcemanager.bangus-city.ts.net` reaches the combined SourceManager dashboard and API on port `17106`.
 - `devplanner.<tailnet>.ts.net` reaches DevPlanner web.
 - `devplanner-api.<tailnet>.ts.net` reaches DevPlanner API.
+- The Tailnet toggle is disabled while its local service is not running.
+- Stopping or restarting an advertised service drains it before local process shutdown.
+- Desired Tailnet state survives a normal stop and is restored only after the service becomes healthy.
+- Drain failure does not block local shutdown and is reported as a cleanup warning.
 - Service status distinguishes pending approval from command failure when Tailscale exposes enough information.
 - The implementation never uses ordinary per-machine hostnames as a substitute for service names in this mode.
 - The implementation never calls `tailscale funnel`.
@@ -437,4 +487,4 @@ Manual verification:
 
 ## Recommendation
 
-This is the best end-state if clean Tailnet hostnames are important. It should not be the first implementation unless the tailnet admin prerequisites are already in place. If we need working Tailnet HTTPS quickly, implement SO-6A first, then add SO-6C as an advanced exposure mode.
+This is the selected end-state for clean Tailnet hostnames. Complete the manual `svc:sourcemanager` verification first, then use the same checklist for a separate API and web service before implementing SourceManager automation.

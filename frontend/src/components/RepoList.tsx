@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import type { CSSProperties } from "react"
 import { Activity, RefreshCw, Server, ShieldAlert } from "lucide-react"
 import * as client from "../api/client"
-import type { LifecycleState, RepoSummary } from "../api/types"
+import type { LifecycleState, RepoSummary, TailscaleStatusResponse } from "../api/types"
 import ServiceCard from "./ServiceCard"
 import styles from "./RepoList.module.css"
 
@@ -19,6 +19,7 @@ export default function RepoList() {
   const [repos, setRepos] = useState<RepoSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [tailscaleStatus, setTailscaleStatus] = useState<TailscaleStatusResponse | null>(null)
 
   const fetchRepos = useCallback(async (manual = false) => {
     if (manual) setIsRefreshing(true)
@@ -39,27 +40,39 @@ export default function RepoList() {
     }
   }, [])
 
+  const fetchTailscale = useCallback(async () => {
+    try {
+      setTailscaleStatus(await client.getTailscaleStatus())
+    } catch {
+      setTailscaleStatus(null)
+    }
+  }, [])
+
   useEffect(() => {
     void fetchRepos()
-    const interval = setInterval(() => { void fetchRepos() }, 10_000)
+    void fetchTailscale()
+    const interval = setInterval(() => {
+      void fetchRepos()
+      void fetchTailscale()
+    }, 10_000)
     return () => clearInterval(interval)
-  }, [fetchRepos])
+  }, [fetchRepos, fetchTailscale])
 
   // ── Action handlers ────────────────────────────────────────────────────────
 
   async function handleStart(repoId: string, serviceId: string) {
     await client.startService(repoId, serviceId)
-    await fetchRepos()
+    await Promise.all([fetchRepos(), fetchTailscale()])
   }
 
   async function handleStop(repoId: string, serviceId: string) {
     await client.stopService(repoId, serviceId)
-    await fetchRepos()
+    await Promise.all([fetchRepos(), fetchTailscale()])
   }
 
   async function handleRestart(repoId: string, serviceId: string) {
     await client.restartService(repoId, serviceId)
-    await fetchRepos()
+    await Promise.all([fetchRepos(), fetchTailscale()])
   }
 
   async function handleUpdate(repoId: string, serviceId: string) {
@@ -67,7 +80,13 @@ export default function RepoList() {
       installMode: "auto",
       restartMode: "auto",
     })
-    await fetchRepos()
+    await Promise.all([fetchRepos(), fetchTailscale()])
+  }
+
+  async function handleTailnetToggle(serviceId: string, enabled: boolean) {
+    if (enabled) await client.enableTailscaleService(serviceId)
+    else await client.disableTailscaleService(serviceId)
+    await Promise.all([fetchRepos(), fetchTailscale()])
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -93,6 +112,9 @@ export default function RepoList() {
   }
 
   const summary = getSummary(repos)
+  const tailnetByService = new Map(
+    tailscaleStatus?.services.map((service) => [service.serviceId, service]) ?? [],
+  )
 
   return (
     <div className={styles.dashboard}>
@@ -120,7 +142,9 @@ export default function RepoList() {
           <button
             className={styles.refreshBtn}
             type="button"
-            onClick={() => void fetchRepos(true)}
+            onClick={() => {
+              void Promise.all([fetchRepos(true), fetchTailscale()])
+            }}
             disabled={isRefreshing}
             aria-label="Refresh service status"
             title="Refresh service status"
@@ -169,6 +193,8 @@ export default function RepoList() {
                     onStop={handleStop}
                     onRestart={handleRestart}
                     onUpdate={handleUpdate}
+                    tailnetStatus={tailnetByService.get(service.id) ?? null}
+                    onTailnetToggle={handleTailnetToggle}
                   />
                 ))}
               </div>

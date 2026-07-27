@@ -35,6 +35,13 @@ export interface ServiceConfig {
   tailscaleServeEnabled?: boolean
   tailscaleServeMode?: "https"
   tailscaleServeTarget?: string
+  // SO-6C named Tailscale Service configuration
+  tailnetExposureMode?: "tailscale-service"
+  tailscaleServiceName?: string
+  tailscaleServiceEnabled?: boolean
+  tailscaleServiceProtocol?: "https"
+  tailscaleServicePort?: number
+  tailscaleServiceTarget?: string
 }
 
 // ── Repo config (groups one or more services sharing a repository) ─────────────
@@ -201,6 +208,12 @@ export interface EditableServiceConfig {
   tailscaleServeEnabled?: boolean
   tailscaleServeMode?: "https"
   tailscaleServeTarget?: string
+  tailnetExposureMode?: "tailscale-service"
+  tailscaleServiceName?: string
+  tailscaleServiceEnabled?: boolean
+  tailscaleServiceProtocol?: "https"
+  tailscaleServicePort?: number
+  tailscaleServiceTarget?: string
 }
 
 export interface EditableRepoConfig {

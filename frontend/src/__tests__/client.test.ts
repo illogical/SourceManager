@@ -10,6 +10,9 @@ import {
   getEditableConfig,
   validateEditableConfig,
   applyEditableConfig,
+  getTailscaleStatus,
+  enableTailscaleService,
+  disableTailscaleService,
 } from "../api/client"
 import type { EditableConfig } from "../api/types"
 
@@ -208,5 +211,27 @@ describe("Config edit functions", () => {
     const err = await applyEditableConfig(mockEditableConfig).catch((e) => e)
     expect(err).toBeInstanceOf(ApiError)
     expect((err as ApiError).status).toBe(422)
+  })
+})
+
+describe("Tailscale API functions", () => {
+  beforeEach(() => setToken("test-token"))
+
+  it("gets Tailnet status", async () => {
+    const fetch = mockFetch(200, { machine: { state: "connected" }, services: [] })
+    vi.stubGlobal("fetch", fetch)
+    await getTailscaleStatus()
+    expect(fetch.mock.calls[0][0]).toBe("/v1/tailscale/status")
+  })
+
+  it("calls named-Service enable and disable routes", async () => {
+    const fetch = mockFetch(200, { success: true })
+    vi.stubGlobal("fetch", fetch)
+    await enableTailscaleService("my-api")
+    await disableTailscaleService("my-api")
+    expect(fetch.mock.calls[0][0]).toBe("/v1/tailscale/services/my-api/service/enable")
+    expect(fetch.mock.calls[1][0]).toBe("/v1/tailscale/services/my-api/service/disable")
+    expect(fetch.mock.calls[0][1].method).toBe("POST")
+    expect(fetch.mock.calls[1][1].method).toBe("POST")
   })
 })

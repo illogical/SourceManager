@@ -12,30 +12,20 @@
       "services": [
         {
           "id": "sourcemanager-api",
-          "displayName": "SourceManager API",
+          "displayName": "SourceManager Web and API",
           "packageManager": "bun",
-          "scriptName": "dev:backend",
+          "scriptName": "start",
           "port": 17106,
           "healthUrl": "http://localhost:17106/health",
           "healthMode": "full",
-          "tags": ["api", "backend"],
+          "tags": ["api", "backend", "frontend"],
           "allowedIps": [],
-          "tailnetHostname": "sourcemanager",
-          "tailnetDomain": "your-tailnet.ts.net",
-          "tailscaleServeEnabled": false,
-          "tailscaleServeMode": "https",
-          "tailscaleServeTarget": "http://localhost:17106"
-        },
-        {
-          "id": "sourcemanager-web",
-          "displayName": "SourceManager Web",
-          "packageManager": "bun",
-          "scriptName": "dev:frontend",
-          "port": 17116,
-          "healthUrl": "http://localhost:17116/",
-          "healthMode": "ping",
-          "tags": ["frontend", "vite"],
-          "allowedIps": []
+          "tailnetExposureMode": "tailscale-service",
+          "tailscaleServiceName": "sourcemanager",
+          "tailscaleServiceEnabled": true,
+          "tailscaleServiceProtocol": "https",
+          "tailscaleServicePort": 443,
+          "tailscaleServiceTarget": "http://127.0.0.1:17106"
         }
       ]
     },
@@ -55,11 +45,12 @@
           "healthMode": "ping",
           "tags": ["api", "backend"],
           "allowedIps": [],
-          "tailnetHostname": "devplanner",
-          "tailnetDomain": "your-tailnet.ts.net",
-          "tailscaleServeEnabled": false,
-          "tailscaleServeMode": "https",
-          "tailscaleServeTarget": "http://localhost:17103"
+          "tailnetExposureMode": "tailscale-service",
+          "tailscaleServiceName": "devplanner-api",
+          "tailscaleServiceEnabled": false,
+          "tailscaleServiceProtocol": "https",
+          "tailscaleServicePort": 443,
+          "tailscaleServiceTarget": "http://127.0.0.1:17103"
         },
         {
           "id": "devplanner-web",
@@ -67,10 +58,16 @@
           "packageManager": "bun",
           "scriptName": "dev:frontend",
           "port": 5173,
-          "healthUrl": "http://localhost:17103/health",
+          "healthUrl": "http://localhost:5173/",
           "healthMode": "ping",
           "tags": ["frontend", "vite"],
-          "allowedIps": []
+          "allowedIps": [],
+          "tailnetExposureMode": "tailscale-service",
+          "tailscaleServiceName": "devplanner",
+          "tailscaleServiceEnabled": false,
+          "tailscaleServiceProtocol": "https",
+          "tailscaleServicePort": 443,
+          "tailscaleServiceTarget": "http://127.0.0.1:5173"
         }
       ]
     },
@@ -90,11 +87,12 @@
           "healthMode": "ping",
           "tags": ["api", "frontend", "dashboard"],
           "allowedIps": [],
-          "tailnetHostname": "lmapi",
-          "tailnetDomain": "your-tailnet.ts.net",
-          "tailscaleServeEnabled": false,
-          "tailscaleServeMode": "https",
-          "tailscaleServeTarget": "http://localhost:3111"
+          "tailnetExposureMode": "tailscale-service",
+          "tailscaleServiceName": "lmapi",
+          "tailscaleServiceEnabled": false,
+          "tailscaleServiceProtocol": "https",
+          "tailscaleServicePort": 443,
+          "tailscaleServiceTarget": "http://127.0.0.1:3111"
         }
       ]
     },
@@ -114,11 +112,12 @@
           "healthMode": "ping",
           "tags": ["api", "backend", "frontend"],
           "allowedIps": [],
-          "tailnetHostname": "memory",
-          "tailnetDomain": "your-tailnet.ts.net",
-          "tailscaleServeEnabled": false,
-          "tailscaleServeMode": "https",
-          "tailscaleServeTarget": "http://localhost:17107"
+          "tailnetExposureMode": "tailscale-service",
+          "tailscaleServiceName": "memory",
+          "tailscaleServiceEnabled": false,
+          "tailscaleServiceProtocol": "https",
+          "tailscaleServicePort": 443,
+          "tailscaleServiceTarget": "http://127.0.0.1:17107"
         }
       ]
     },
@@ -138,11 +137,12 @@
           "healthMode": "ping",
           "tags": ["api", "backend"],
           "allowedIps": [],
-          "tailnetHostname": "lmeval",
-          "tailnetDomain": "your-tailnet.ts.net",
-          "tailscaleServeEnabled": false,
-          "tailscaleServeMode": "https",
-          "tailscaleServeTarget": "http://localhost:3200"
+          "tailnetExposureMode": "tailscale-service",
+          "tailscaleServiceName": "lmeval-api",
+          "tailscaleServiceEnabled": false,
+          "tailscaleServiceProtocol": "https",
+          "tailscaleServicePort": 443,
+          "tailscaleServiceTarget": "http://127.0.0.1:3200"
         },
         {
           "id": "lmeval-frontend",
@@ -153,7 +153,13 @@
           "healthUrl": "http://localhost:5177/",
           "healthMode": "ping",
           "tags": ["frontend", "vite"],
-          "allowedIps": []
+          "allowedIps": [],
+          "tailnetExposureMode": "tailscale-service",
+          "tailscaleServiceName": "lmeval",
+          "tailscaleServiceEnabled": false,
+          "tailscaleServiceProtocol": "https",
+          "tailscaleServicePort": 443,
+          "tailscaleServiceTarget": "http://127.0.0.1:5177"
         }
       ]
     }

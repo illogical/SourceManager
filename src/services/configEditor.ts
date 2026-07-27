@@ -86,6 +86,12 @@ function toEditableConfig(config: ProjectsFileConfig): EditableConfig {
         tailscaleServeEnabled: svc.tailscaleServeEnabled,
         tailscaleServeMode: svc.tailscaleServeMode,
         tailscaleServeTarget: svc.tailscaleServeTarget,
+        tailnetExposureMode: svc.tailnetExposureMode,
+        tailscaleServiceName: svc.tailscaleServiceName,
+        tailscaleServiceEnabled: svc.tailscaleServiceEnabled,
+        tailscaleServiceProtocol: svc.tailscaleServiceProtocol,
+        tailscaleServicePort: svc.tailscaleServicePort,
+        tailscaleServiceTarget: svc.tailscaleServiceTarget,
       })),
     })),
   }
@@ -213,6 +219,36 @@ export function validateEditableConfig(proposed: EditableConfig): ValidationResu
       if (svc.tailscaleServeEnabled === true && !svc.tailnetHostname) {
         warn(`${sp}.tailscaleServeEnabled`, "tailscaleServeEnabled is true but tailnetHostname is not set — serve will have no effect")
       }
+      if (svc.tailnetExposureMode !== undefined && svc.tailnetExposureMode !== "tailscale-service") {
+        err(`${sp}.tailnetExposureMode`, 'Only "tailscale-service" is supported')
+      }
+      if (svc.tailscaleServiceName && !SUBDOMAIN_RE.test(svc.tailscaleServiceName)) {
+        err(`${sp}.tailscaleServiceName`, "Service name must contain lowercase letters, digits, and hyphens only")
+      }
+      if (svc.tailscaleServiceProtocol !== undefined && svc.tailscaleServiceProtocol !== "https") {
+        err(`${sp}.tailscaleServiceProtocol`, 'Only "https" is supported')
+      }
+      if (svc.tailscaleServicePort !== undefined && (
+        !Number.isInteger(svc.tailscaleServicePort)
+        || svc.tailscaleServicePort < 1
+        || svc.tailscaleServicePort > 65535
+      )) {
+        err(`${sp}.tailscaleServicePort`, "HTTPS port must be an integer between 1 and 65535")
+      }
+      if (svc.tailscaleServiceTarget && !isValidUrl(svc.tailscaleServiceTarget)) {
+        err(`${sp}.tailscaleServiceTarget`, "Must be a valid http:// or https:// URL")
+      }
+      if (svc.tailscaleServiceEnabled === true) {
+        if (svc.tailnetExposureMode !== "tailscale-service") {
+          err(`${sp}.tailnetExposureMode`, 'Enabled named Service requires "tailscale-service" mode')
+        }
+        if (!svc.tailscaleServiceName) {
+          err(`${sp}.tailscaleServiceName`, "Enabled named Service requires a service name")
+        }
+        if (!svc.tailscaleServiceTarget) {
+          err(`${sp}.tailscaleServiceTarget`, "Enabled named Service requires a local target")
+        }
+      }
     }
   }
 
@@ -256,6 +292,8 @@ export function diffEditableConfig(current: EditableConfig, proposed: EditableCo
         "port", "healthUrl", "healthMode", "tags", "allowedIps",
         "tailnetHostname", "tailnetDomain", "tailscaleServeEnabled",
         "tailscaleServeMode", "tailscaleServeTarget",
+        "tailnetExposureMode", "tailscaleServiceName", "tailscaleServiceEnabled",
+        "tailscaleServiceProtocol", "tailscaleServicePort", "tailscaleServiceTarget",
       ]
       for (const field of editableFields) {
         check(`${sp}.${field}`, cs[field], ps[field])
@@ -297,6 +335,12 @@ function mergeService(
     tailscaleServeEnabled: proposed.tailscaleServeEnabled,
     tailscaleServeMode: proposed.tailscaleServeMode,
     tailscaleServeTarget: proposed.tailscaleServeTarget || undefined,
+    tailnetExposureMode: proposed.tailnetExposureMode,
+    tailscaleServiceName: proposed.tailscaleServiceName || undefined,
+    tailscaleServiceEnabled: proposed.tailscaleServiceEnabled,
+    tailscaleServiceProtocol: proposed.tailscaleServiceProtocol,
+    tailscaleServicePort: proposed.tailscaleServicePort,
+    tailscaleServiceTarget: proposed.tailscaleServiceTarget || undefined,
   }
 }
 
@@ -362,5 +406,35 @@ export async function applyEditableConfig(
   renameSync(tmpPath, configPath)
 
   // 7. Invalidate in-memory cache
+  _invalidate()
+}
+
+/**
+ * Persist only the desired named-Service state without replacing unrelated
+ * configuration fields. All work is synchronous so another in-process config
+ * write cannot interleave between read and atomic rename.
+ */
+export function setTailscaleServiceEnabled(
+  serviceId: string,
+  enabled: boolean,
+  configPath: string = CONFIG_PATH,
+  _invalidate: () => void = invalidateCache,
+): void {
+  const current = rawRead(configPath)
+  let found = false
+  for (const repo of current.repos) {
+    const service = repo.services.find((candidate) => candidate.id === serviceId)
+    if (!service) continue
+    service.tailscaleServiceEnabled = enabled
+    found = true
+    break
+  }
+  if (!found) {
+    throw new Error(`Service "${serviceId}" not found while updating Tailscale state`)
+  }
+
+  const tmpPath = configPath + ".tmp"
+  writeFileSync(tmpPath, JSON.stringify(current, null, 2), "utf-8")
+  renameSync(tmpPath, configPath)
   _invalidate()
 }

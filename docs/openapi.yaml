@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: SourceManager API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     Secure HTTP API for triggering Git operations and managing server process lifecycle
     on a Windows dev machine. Designed to be called by AI agents on remote machines.
@@ -23,6 +23,8 @@ tags:
     description: Git pull / branch-switch workflow
   - name: Lifecycle
     description: Service process start, stop, and restart
+  - name: Tailscale
+    description: Named Tailnet Service status and controls
 
 security:
   - DevServerToken: []
@@ -197,6 +199,100 @@ components:
         serveTarget:
           type: string
           example: http://localhost:3000
+        exposureMode:
+          type: string
+          enum: [tailscale-service]
+        serviceName:
+          type: string
+          example: my-app
+        serviceEnabled:
+          type: boolean
+        servicePort:
+          type: integer
+          example: 443
+        serviceTarget:
+          type: string
+          example: http://127.0.0.1:3000
+
+    TailscaleMachineStatus:
+      type: object
+      required: [state, backendState, tailnetDomain, tags, error]
+      properties:
+        state:
+          type: string
+          enum: [connected, degraded, unavailable]
+        backendState:
+          type: [string, 'null']
+        tailnetDomain:
+          type: [string, 'null']
+          example: bangus-city.ts.net
+        tags:
+          type: array
+          items:
+            type: string
+        error:
+          type: [string, 'null']
+
+    TailscaleServiceCheck:
+      type: object
+      required:
+        - serviceId
+        - configured
+        - desiredEnabled
+        - status
+        - canToggle
+      properties:
+        serviceId:
+          type: string
+        configured:
+          type: boolean
+        desiredEnabled:
+          type: boolean
+        serviceName:
+          type: [string, 'null']
+          example: svc:sourcemanager
+        expectedUrl:
+          type: [string, 'null']
+          example: https://sourcemanager.bangus-city.ts.net
+        localTarget:
+          type: [string, 'null']
+          example: http://127.0.0.1:17106
+        httpsPort:
+          type: [integer, 'null']
+        status:
+          type: string
+          enum:
+            - not_configured
+            - unavailable
+            - local_stopped
+            - not_advertised
+            - pending_approval
+            - draining
+            - connected
+            - mismatch
+            - error
+        lastError:
+          type: [string, 'null']
+        lastWarning:
+          type: [string, 'null']
+        operation:
+          oneOf:
+            - type: string
+              enum: [enabling, draining, disabling]
+            - type: 'null'
+        canToggle:
+          type: boolean
+
+    TailscaleStatusResponse:
+      type: object
+      required: [machine, services]
+      properties:
+        machine:
+          $ref: '#/components/schemas/TailscaleMachineStatus'
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/TailscaleServiceCheck'
 
     ServiceSummary:
       type: object
@@ -674,3 +770,68 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /v1/tailscale/status:
+    get:
+      operationId: getTailscaleStatus
+      summary: Get Tailscale host and named-Service status
+      tags: [Tailscale]
+      responses:
+        '200':
+          description: Host status and one Tailnet check per configured local service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TailscaleStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/tailscale/services/{serviceId}/service/enable:
+    post:
+      operationId: enableTailscaleService
+      summary: Enable a named Tailscale Service
+      tags: [Tailscale]
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Desired enabled state persisted and endpoint advertised.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Local service is not running.
+        '422':
+          description: Named-Service configuration is incomplete.
+        '503':
+          description: Tailscale is unavailable.
+
+  /v1/tailscale/services/{serviceId}/service/disable:
+    post:
+      operationId: disableTailscaleService
+      summary: Disable a named Tailscale Service
+      tags: [Tailscale]
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Desired disabled state persisted and endpoint removed after drain.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Local service is not running.
+        '422':
+          description: Named-Service configuration is incomplete.
+        '503':
+          description: Tailscale is unavailable.

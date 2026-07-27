@@ -1,8 +1,9 @@
 import { useState } from "react"
-import { ExternalLink, Play, RefreshCw, RotateCcw, Square, Terminal, Wifi } from "lucide-react"
-import type { ServiceSummary } from "../api/types"
+import { Play, RefreshCw, RotateCcw, Square, Terminal } from "lucide-react"
+import type { ServiceSummary, TailscaleServiceCheck } from "../api/types"
 import LifecycleBadge from "./LifecycleBadge"
 import ActionButton from "./ActionButton"
+import TailscalePanel from "./TailscalePanel"
 import styles from "./ServiceCard.module.css"
 
 interface Props {
@@ -12,9 +13,20 @@ interface Props {
   onStop: (repoId: string, serviceId: string) => Promise<void>
   onRestart: (repoId: string, serviceId: string) => Promise<void>
   onUpdate: (repoId: string, serviceId: string) => Promise<void>
+  tailnetStatus?: TailscaleServiceCheck | null
+  onTailnetToggle?: (serviceId: string, enabled: boolean) => Promise<void>
 }
 
-export default function ServiceCard({ repoId, service, onStart, onStop, onRestart, onUpdate }: Props) {
+export default function ServiceCard({
+  repoId,
+  service,
+  onStart,
+  onStop,
+  onRestart,
+  onUpdate,
+  tailnetStatus = null,
+  onTailnetToggle = async () => {},
+}: Props) {
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -23,11 +35,6 @@ export default function ServiceCard({ repoId, service, onStart, onStop, onRestar
   const isPending = pendingAction !== null
   const isRunning = state === "running" || state === "starting"
   const isStopping = state === "stopping"
-
-  const tailnetUrl =
-    tailnet?.hostname && tailnet?.domain
-      ? `${tailnet.hostname}.${tailnet.domain}`
-      : null
 
   async function run(name: string, fn: () => Promise<void>) {
     setPendingAction(name)
@@ -50,6 +57,22 @@ export default function ServiceCard({ repoId, service, onStart, onStop, onRestar
   const toggleVariant = isRunning || isStopping ? "stop" : "start"
   const canRestart = state === "running"
   const canUpdate = state !== "starting" && state !== "stopping"
+  const effectiveTailnetStatus: TailscaleServiceCheck | null = tailnetStatus ?? (tailnet ? {
+    serviceId: service.id,
+    configured: true,
+    desiredEnabled: tailnet.serviceEnabled ?? tailnet.serveEnabled,
+    serviceName: tailnet.serviceName ? `svc:${tailnet.serviceName}` : null,
+    expectedUrl: tailnet.hostname && tailnet.domain
+      ? `https://${tailnet.hostname}.${tailnet.domain}`
+      : null,
+    localTarget: tailnet.serviceTarget ?? tailnet.serveTarget,
+    httpsPort: tailnet.servicePort ?? 443,
+    status: state === "running" ? "not_advertised" : "local_stopped",
+    lastError: null,
+    lastWarning: null,
+    operation: null,
+    canToggle: false,
+  } : null)
 
   async function handleToggle() {
     if (isRunning) {
@@ -116,17 +139,15 @@ export default function ServiceCard({ repoId, service, onStart, onStop, onRestar
         />
       </div>
 
-      {tailnetUrl && (
-        <a
-          className={styles.tailnet}
-          href={`https://${tailnetUrl}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          <Wifi aria-hidden="true" size={13} strokeWidth={2.2} />
-          <span>{tailnetUrl}</span>
-          <ExternalLink aria-hidden="true" size={12} strokeWidth={2.2} />
-        </a>
+      {tailnet && (
+        <TailscalePanel
+          lifecycleState={state}
+          status={effectiveTailnetStatus}
+          pending={isPending}
+          onToggle={(enabled) => {
+            void run("tailnet", () => onTailnetToggle(service.id, enabled))
+          }}
+        />
       )}
 
       {(state === "failed" && lifecycle.lastError) || actionError ? (

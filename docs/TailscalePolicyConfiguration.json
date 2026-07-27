@@ -8,8 +8,7 @@
 	//   3. SourceManager (or manual tailscale serve) advertises each Service host.
 	//
 	// Service map (HTTPS :443 → local dev ports):
-	//   svc:sourcemanager     → http://127.0.0.1:17116  (SourceManager web)
-	//   svc:sourcemanager-api → http://127.0.0.1:17106  (SourceManager API)
+	//   svc:sourcemanager     → http://127.0.0.1:17106  (SourceManager web + API)
 	//   svc:devplanner        → http://127.0.0.1:5173   (DevPlanner web)
 	//   svc:devplanner-api    → http://127.0.0.1:17103  (DevPlanner API)
 	//   svc:lmapi             → http://127.0.0.1:3111   (LMApi)
@@ -72,7 +71,6 @@
 			"src": ["autogroup:admin"],
 			"dst": [
 				"svc:sourcemanager",
-				"svc:sourcemanager-api",
 				"svc:devplanner",
 				"svc:devplanner-api",
 				"svc:lmapi",
@@ -86,7 +84,6 @@
 			"src": ["tag:client"],
 			"dst": [
 				"svc:sourcemanager",
-				"svc:sourcemanager-api",
 				"svc:devplanner",
 				"svc:devplanner-api",
 				"svc:lmapi",
@@ -100,7 +97,6 @@
 			"src": ["tag:monitoring"],
 			"dst": [
 				"svc:sourcemanager",
-				"svc:sourcemanager-api",
 				"svc:devplanner",
 				"svc:devplanner-api",
 				"svc:lmapi",
@@ -136,7 +132,6 @@
 		// Policies apply on first advertisement; re-advertise after policy changes if needed.
 		"services": {
 			"svc:sourcemanager":     ["tag:dev-service-host"],
-			"svc:sourcemanager-api": ["tag:dev-service-host"],
 			"svc:devplanner":        ["tag:dev-service-host"],
 			"svc:devplanner-api":    ["tag:dev-service-host"],
 			"svc:lmapi":             ["tag:dev-service-host"],

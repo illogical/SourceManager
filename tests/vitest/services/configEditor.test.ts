@@ -7,6 +7,7 @@ import {
   validateEditableConfig,
   diffEditableConfig,
   applyEditableConfig,
+  setTailscaleServiceEnabled,
 } from "../../../src/services/configEditor"
 import type { EditableConfig } from "../../../src/types"
 
@@ -216,6 +217,40 @@ describe("validateEditableConfig", () => {
     const result = validateEditableConfig(cfg)
     expect(result.valid).toBe(false)
     expect(result.errors.some((e) => e.path.includes("tailnetHostname"))).toBe(true)
+  })
+
+  it("accepts complete named Tailscale Service fields", () => {
+    const cfg = makeValid()
+    Object.assign(cfg.repos[0].services[0], {
+      tailnetExposureMode: "tailscale-service",
+      tailscaleServiceName: "my-repo",
+      tailscaleServiceEnabled: true,
+      tailscaleServiceProtocol: "https",
+      tailscaleServicePort: 443,
+      tailscaleServiceTarget: "http://127.0.0.1:3000",
+    })
+    expect(validateEditableConfig(cfg).valid).toBe(true)
+  })
+
+  it("rejects enabled named Tailscale Service without required fields", () => {
+    const cfg = makeValid()
+    cfg.repos[0].services[0].tailscaleServiceEnabled = true
+    const result = validateEditableConfig(cfg)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some((error) => error.path.includes("tailscaleServiceName"))).toBe(true)
+  })
+})
+
+describe("setTailscaleServiceEnabled", () => {
+  it("updates only the selected service desired state", () => {
+    const path = makeTmp()
+    const invalidate = vi.fn()
+    setTailscaleServiceEnabled("my-repo-web", true, path, invalidate)
+
+    const saved = JSON.parse(readFileSync(path, "utf-8"))
+    expect(saved.repos[0].services[0].tailscaleServiceEnabled).toBe(true)
+    expect(saved.repos[0].services[0].displayName).toBe("Web")
+    expect(invalidate).toHaveBeenCalledOnce()
   })
 })
 

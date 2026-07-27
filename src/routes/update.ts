@@ -11,6 +11,11 @@ import { checkHealth } from "../services/healthCheck"
 import { runInstall } from "../services/installer"
 import { processManager } from "../services/processManager"
 import { logRun } from "../services/runLogger"
+import {
+  prepareTailscaleForStop,
+  restoreTailscaleWhenReady,
+  tailscaleExecutor,
+} from "../services/tailscale"
 import type {
   InstallMode,
   InstallRunResult,
@@ -29,6 +34,19 @@ function makeId(): string {
 
 function skipped(step: string, reason: string): StepResult {
   return { step, status: "skipped", message: reason, durationMs: 0 }
+}
+
+async function restartWithTailnet(repo: RepoConfig, service: ServiceConfig) {
+  await prepareTailscaleForStop(service, tailscaleExecutor)
+  const result = await processManager.restart(repo, service)
+  if (result.success) {
+    void restoreTailscaleWhenReady(
+      service,
+      async () => (await checkHealth(service)).status === "pass",
+      tailscaleExecutor,
+    )
+  }
+  return result
 }
 
 // ── Steps 2–8 extracted so the handler stays readable ────────────────────────
@@ -138,7 +156,7 @@ async function runBackgroundSteps(opts: {
     restartRun = { status: "skipped", reason: skipReason }
   } else if (restartMode === "always") {
     const restartStart = Date.now()
-    const result = await processManager.restart(repo, service)
+    const result = await restartWithTailnet(repo, service)
     const durationMs = Date.now() - restartStart
     steps.push({
       step: "restart",
@@ -168,7 +186,7 @@ async function runBackgroundSteps(opts: {
 
     if (restartMode === "auto" && healthResult.status === "fail") {
       const restartStart = Date.now()
-      const result = await processManager.restart(repo, service)
+      const result = await restartWithTailnet(repo, service)
       const durationMs = Date.now() - restartStart
       steps.push({
         step: "restart",
@@ -366,7 +384,7 @@ export const updateRoute = new Elysia({ prefix: "/repos/:repoId/services/:servic
       restartRun = { status: "skipped", reason: skipReason }
     } else if (restartMode === "always") {
       const restartStart = Date.now()
-      const result = await processManager.restart(repo, service)
+      const result = await restartWithTailnet(repo, service)
       const durationMs = Date.now() - restartStart
       steps.push({
         step: "restart",
@@ -396,7 +414,7 @@ export const updateRoute = new Elysia({ prefix: "/repos/:repoId/services/:servic
 
       if (restartMode === "auto" && healthResult.status === "fail") {
         const restartStart = Date.now()
-        const result = await processManager.restart(repo, service)
+        const result = await restartWithTailnet(repo, service)
         const durationMs = Date.now() - restartStart
         steps.push({
           step: "restart",

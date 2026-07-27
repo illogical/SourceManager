@@ -86,6 +86,7 @@ export class ProcessManager {
   _killProcessTree: (pid: number) => Promise<{ success: boolean; error?: string }> = killProcessTree
   _killPid: (pid: number) => Promise<{ success: boolean; error?: string }> = (pid) => this.killPid(pid)
   _logLifecycleRun: typeof logLifecycleRun = logLifecycleRun
+  _onUnexpectedExit: (serviceId: string) => void | Promise<void> = () => {}
   _stopPollIntervalMs = STOP_POLL_INTERVAL_MS
   _stopPollTimeoutMs = STOP_POLL_TIMEOUT_MS
   _persistState = true
@@ -327,6 +328,7 @@ export class ProcessManager {
         this.processes.delete(service.id)
         this.portMap.delete(service.port)
         await this.saveState()
+        void this._onUnexpectedExit(service.id)
       }
     }).catch(() => {})
 

@@ -31,11 +31,12 @@
           "healthMode": "full",
           "tags": ["api"],
           "allowedIps": ["192.168.1.0/24"],
-          "tailnetHostname": "my-app",
-          "tailnetDomain": "your-tailnet.ts.net",
-          "tailscaleServeEnabled": false,
-          "tailscaleServeMode": "https",
-          "tailscaleServeTarget": "http://localhost:8080"
+          "tailnetExposureMode": "tailscale-service",
+          "tailscaleServiceName": "my-app-api",
+          "tailscaleServiceEnabled": false,
+          "tailscaleServiceProtocol": "https",
+          "tailscaleServicePort": 443,
+          "tailscaleServiceTarget": "http://127.0.0.1:8080"
         }
       ]
     },

@@ -165,6 +165,29 @@ describe("validateConfig — tailnet field validation", () => {
     cfg.repos[0].services[0].tailscaleServeMode = "http" as "https"
     expect(() => validateConfig(cfg)).toThrow(ConfigError)
   })
+
+  it("accepts a complete named Tailscale Service configuration", () => {
+    const cfg = validConfig()
+    Object.assign(cfg.repos[0].services[0], {
+      tailnetExposureMode: "tailscale-service",
+      tailscaleServiceName: "my-app",
+      tailscaleServiceEnabled: true,
+      tailscaleServiceProtocol: "https",
+      tailscaleServicePort: 443,
+      tailscaleServiceTarget: "http://127.0.0.1:3000",
+    })
+    expect(() => validateConfig(cfg)).not.toThrow()
+  })
+
+  it("rejects enabled named Service configuration without a target", () => {
+    const cfg = validConfig()
+    Object.assign(cfg.repos[0].services[0], {
+      tailnetExposureMode: "tailscale-service",
+      tailscaleServiceName: "my-app",
+      tailscaleServiceEnabled: true,
+    })
+    expect(() => validateConfig(cfg)).toThrow(/requires/)
+  })
 })
 
 describe("config accessors", () => {

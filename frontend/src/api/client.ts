@@ -5,6 +5,7 @@ import type {
   ConfigResponse,
   ConfigValidateResponse,
   ConfigApplyResponse,
+  TailscaleStatusResponse,
 } from "./types"
 
 const TOKEN_KEY = "sm:token"
@@ -112,6 +113,18 @@ export function startService(repoId: string, serviceId: string): Promise<unknown
 
 export function stopService(repoId: string, serviceId: string): Promise<unknown> {
   return apiFetch(`/v1/repos/${repoId}/services/${serviceId}/stop`, { method: "POST" })
+}
+
+export function getTailscaleStatus(): Promise<TailscaleStatusResponse> {
+  return apiFetch<TailscaleStatusResponse>("/v1/tailscale/status")
+}
+
+export function enableTailscaleService(serviceId: string): Promise<unknown> {
+  return apiFetch(`/v1/tailscale/services/${serviceId}/service/enable`, { method: "POST" })
+}
+
+export function disableTailscaleService(serviceId: string): Promise<unknown> {
+  return apiFetch(`/v1/tailscale/services/${serviceId}/service/disable`, { method: "POST" })
 }
 
 export function restartService(repoId: string, serviceId: string): Promise<unknown> {

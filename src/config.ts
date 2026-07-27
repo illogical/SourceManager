@@ -287,6 +287,38 @@ function validateService(svc: ServiceConfig, repoId: string, serviceIds: Set<str
   if (svc.tailscaleServeEnabled !== undefined && typeof svc.tailscaleServeEnabled !== "boolean") {
     abort(`Service "${svc.id}" tailscaleServeEnabled must be a boolean`)
   }
+
+  if (svc.tailnetExposureMode !== undefined && svc.tailnetExposureMode !== "tailscale-service") {
+    abort(`Service "${svc.id}" tailnetExposureMode must be "tailscale-service"`)
+  }
+  if (svc.tailscaleServiceName !== undefined) {
+    if (typeof svc.tailscaleServiceName !== "string" || !SLUG_RE.test(svc.tailscaleServiceName)) {
+      abort(`Service "${svc.id}" tailscaleServiceName must contain only lowercase letters, digits, and hyphens`)
+    }
+  }
+  if (svc.tailscaleServiceEnabled !== undefined && typeof svc.tailscaleServiceEnabled !== "boolean") {
+    abort(`Service "${svc.id}" tailscaleServiceEnabled must be a boolean`)
+  }
+  if (svc.tailscaleServiceProtocol !== undefined && svc.tailscaleServiceProtocol !== "https") {
+    abort(`Service "${svc.id}" tailscaleServiceProtocol must be "https"`)
+  }
+  if (svc.tailscaleServicePort !== undefined && (
+    !Number.isInteger(svc.tailscaleServicePort)
+    || svc.tailscaleServicePort < 1
+    || svc.tailscaleServicePort > 65535
+  )) {
+    abort(`Service "${svc.id}" tailscaleServicePort must be an integer between 1 and 65535`)
+  }
+  if (svc.tailscaleServiceTarget !== undefined && !isValidUrl(svc.tailscaleServiceTarget)) {
+    abort(`Service "${svc.id}" tailscaleServiceTarget must be a valid http/https URL`)
+  }
+  if (svc.tailscaleServiceEnabled === true && (
+    svc.tailnetExposureMode !== "tailscale-service"
+    || !svc.tailscaleServiceName
+    || !svc.tailscaleServiceTarget
+  )) {
+    abort(`Service "${svc.id}" enabled Tailscale Service requires tailnetExposureMode, tailscaleServiceName, and tailscaleServiceTarget`)
+  }
 }
 
 // ── Config accessors ──────────────────────────────────────────────────────────
