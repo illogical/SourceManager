@@ -106,11 +106,15 @@ export default function ServiceCard({
             <Terminal aria-hidden="true" size={13} strokeWidth={2.2} />
             {service.packageManager} {service.scriptName}
           </span>
-          {service.tags.map((tag) => (
-            <span key={tag} className={styles.tag}>
-              {tag}
-            </span>
-          ))}
+          {service.tags.length > 0 && (
+            <div className={styles.tagList}>
+              {service.tags.map((tag) => (
+                <span key={tag} className={styles.tag}>
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
