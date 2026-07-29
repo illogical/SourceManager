@@ -1,9 +1,10 @@
 # Service Stop Functionality Improvement Plan
 
-**Status:** Planning
+**Status:** Cancelled (used alternative approach)
 **Priority:** High
-**Scope:** Backend process lifecycle, lifecycle logs, dashboard stop feedback
-**Related files:** `src/services/processManager.ts`, `src/routes/repos.ts`, `src/types.ts`, `frontend/src/api/types.ts`, `frontend/src/components/*`, `tests/vitest/processManager.test.ts`, `tests/vitest/routes/repos.test.ts`, `frontend/src/__tests__/*`
+**Scope:** Backend process lifecycle, Tailnet-aware shutdown, lifecycle logs, dashboard stop feedback, SourceManager application shutdown
+**Related files:** `src/services/processManager.ts`, `src/services/tailscale.ts`, `src/index.ts`, `src/routes/repos.ts`, `src/types.ts`, `frontend/src/api/types.ts`, `frontend/src/components/*`, `tests/vitest/processManager.test.ts`, `tests/vitest/routes/repos.test.ts`, `frontend/src/__tests__/*`
+**Alternative:** [Preserve Managed Services and Reconcile on Startup](./service-persistence-and-startup-reconciliation.md)
 
 ---
 
@@ -18,6 +19,12 @@ The dashboard already gives useful start feedback by moving services to `startin
 3. Verify the service is actually down before reporting `stopped`.
 4. Keep actionable logs when a stop cannot be completed.
 5. Surface stop failure detail in the API response and frontend.
+6. Drain an advertised named Tailscale Service before its local process is stopped.
+7. When SourceManager itself shuts down, gracefully drain Tailnet support and stop only the local services that SourceManager currently tracks.
+
+This plan is the **stop-on-shutdown** alternative. A separate plan evaluates
+leaving managed services and their Tailnet advertisements running while
+SourceManager is offline, then reconciling them when SourceManager starts again.
 
 ---
 
@@ -409,6 +416,90 @@ Example:
 [ProcessManager] Stop verification failed for "lmapi-api": port 17100 still listening on PID 12580
 ```
 
+### Step 12: Centralize Tailnet-aware service shutdown
+
+The repository already calls `prepareTailscaleForStop()` before individual stop
+and restart routes. Move that ordering into a shared lifecycle coordinator so
+routes, update-triggered restarts, and application shutdown cannot accidentally
+bypass it.
+
+For each configured service stop:
+
+1. Inspect the observed Tailscale Serve configuration, rather than relying only
+   on the saved `tailscaleServiceEnabled` value.
+2. If the named Service is advertised, run
+   `tailscale serve drain svc:<name>` and await acknowledgement.
+3. Immediately begin the existing verified local stop after drain completes.
+4. Preserve the endpoint configuration and saved desired-enabled state so a
+   later healthy start can advertise it again.
+5. If drain fails, attempt to remove only that Service's configured HTTPS
+   endpoint, record a structured cleanup warning, and continue the local stop.
+6. Never invoke `tailscale serve reset`.
+
+A Tailnet failure must not prevent local lifecycle control. The stop response
+and lifecycle log must distinguish:
+
+- local stop success with Tailnet cleanup success
+- local stop success with a Tailnet cleanup warning
+- local stop failure with or without a Tailnet cleanup warning
+
+### Step 13: Add coordinated SourceManager application shutdown
+
+Add one idempotent application shutdown coordinator used by:
+
+- the SourceManager service card's Stop toggle
+- `SIGINT`, including Ctrl+C
+- `SIGTERM`
+
+The coordinator must:
+
+1. Mark application state as `shutting_down` and reject new lifecycle, update,
+   and Tailnet mutations with `503 SOURCE_MANAGER_SHUTTING_DOWN`.
+2. Snapshot only processes currently tracked by `ProcessManager`. Do not stop
+   externally started or merely healthy configured services during whole-app
+   shutdown.
+3. Resolve each tracked process to its service configuration.
+4. Run service cleanup pipelines concurrently, while preserving Tailnet drain
+   before local process termination within each pipeline.
+5. Drain SourceManager's own named Tailnet Service after a UI self-stop response
+   has been accepted and before closing the HTTP server. Identify the self
+   service by its configured port matching `server.port`; never pass its own PID
+   through the ordinary `ProcessManager.stop()` path.
+6. Continue all remaining cleanup after an individual Tailnet or process error.
+7. Write one structured shutdown summary and close the Elysia server.
+8. Enforce a 15-second overall deadline. Log incomplete work, close active HTTP
+   connections, and exit when the deadline expires.
+9. Treat a second shutdown signal as an immediate forced exit.
+
+The root development command currently gives `concurrently` only a three-second
+kill timeout. Increase it to at least 20 seconds when implementing this option
+so the backend can use its 15-second cleanup window before the launcher forces
+termination.
+
+For the SourceManager service card, the existing stop endpoint becomes a
+special self-stop contract:
+
+```json
+{
+  "serviceId": "sourcemanager-api",
+  "success": true,
+  "shutdownAccepted": true,
+  "message": "SourceManager is shutting down",
+  "application": {
+    "state": "shutting_down",
+    "phase": "accepted"
+  },
+  "lifecycle": {
+    "state": "stopping"
+  }
+}
+```
+
+Return this response with HTTP `202 Accepted`, then schedule cleanup after the
+response can be flushed. Ordinary managed-service stops remain synchronous.
+SIGKILL, power loss, and other non-catchable termination remain outside the
+graceful-shutdown guarantee.
+
 ---
 
 ## Frontend Implementation Plan
@@ -490,6 +581,16 @@ If the response includes `diagnostics`, the API client message should include:
 
 Do not dump large diagnostics objects into visible UI. Keep full details in `console.error`.
 
+### Step 6: Show SourceManager application shutdown
+
+Expose additive application `state` and `phase` fields from `/health`. When
+self-stop is accepted or polling observes `shutting_down`, the dashboard must:
+
+- show a persistent **SourceManager is shutting down** banner
+- disable all lifecycle, update, and Tailnet actions
+- stop ordinary refresh errors from replacing the shutdown message
+- treat the eventual network disconnect as expected
+
 ---
 
 ## Test Plan
@@ -549,6 +650,26 @@ Required tests:
 3. `ServiceCard` shows stop action errors.
 4. `RepoList` count helpers include `stopping`.
 5. API client error detail includes stop failure message and diagnostics code when present.
+6. SourceManager self-stop handles HTTP 202 and shows the shutdown banner.
+7. All mutations are disabled after application shutdown is accepted.
+8. The expected disconnect does not replace the shutdown banner with a generic API error.
+
+### Application shutdown tests
+
+Add focused coordinator and signal-handler tests:
+
+1. Individual stop drains observed Tailnet advertisement before local stop.
+2. A non-advertised or non-Tailnet service skips Tailnet commands.
+3. Drain failure attempts service-specific endpoint cleanup and still calls local stop.
+4. Normal drain preserves endpoint configuration and desired-enabled state.
+5. Whole-app shutdown stops tracked services only.
+6. Tracked service pipelines run concurrently while maintaining per-service ordering.
+7. Self-stop returns HTTP 202 before cleanup and never kills the request-handling PID.
+8. Repeated shutdown requests share one in-flight shutdown operation.
+9. A second signal forces immediate exit.
+10. The 15-second deadline records incomplete cleanup and exits.
+11. Mutating endpoints return `503 SOURCE_MANAGER_SHUTTING_DOWN` during cleanup.
+12. The structured shutdown report contains Tailnet and process failures without secrets.
 
 ---
 
@@ -622,6 +743,13 @@ Backend:
 - Stop failure preserves actionable `lastError`.
 - Stop success deletes state only after verification succeeds.
 - Stop attempts are logged durably with enough detail to diagnose failure.
+- An advertised named Tailscale Service is drained before its local process is stopped.
+- Tailnet cleanup failure does not prevent the local stop and is returned as a warning.
+- Normal stop preserves Tailnet endpoint configuration and desired-enabled state.
+- SourceManager UI self-stop, SIGINT, and SIGTERM use one idempotent shutdown coordinator.
+- Whole-app shutdown stops only services tracked by SourceManager.
+- SourceManager's own Tailnet advertisement is drained before its HTTP server exits.
+- Whole-app shutdown is bounded to 15 seconds and a second signal exits immediately.
 
 Frontend:
 
@@ -631,6 +759,8 @@ Frontend:
 - Summary counts include `stopping`.
 - Stop errors are visible on the service card.
 - Full stop diagnostics remain available in browser console/API response.
+- SourceManager self-stop returns an accepted state before the API exits.
+- The dashboard shows "SourceManager is shutting down" and treats disconnect as expected.
 
 Tests:
 
@@ -666,6 +796,9 @@ Tests:
 10. Run targeted tests.
 11. Manually verify DevPlanner API still stops.
 12. Manually verify DevPlanner frontend and LMApi now stop.
+13. Add the shared Tailnet-aware lifecycle coordinator.
+14. Add SourceManager self-stop and SIGINT/SIGTERM coordination.
+15. Add application shutdown state, logging, UI feedback, and deadline tests.
 
 ---
 
@@ -683,3 +816,13 @@ Tests:
 4. Should SourceManager kill process trees by default on Windows?
    - Recommendation: first kill the tracked PID normally, then kill remaining configured port PID, then use process-tree fallback only when needed. This keeps the blast radius tied to configured service ownership.
 
+## Resolved Application Shutdown Decisions
+
+1. **Tailnet stop semantics:** drain advertisement and preserve endpoint
+   configuration plus desired-enabled state.
+2. **Whole-app process scope:** stop only processes tracked by SourceManager.
+3. **SourceManager UI stop:** return HTTP 202, then perform cleanup and exit.
+4. **Deadline:** allow 15 seconds, then log incomplete work and force exit.
+5. **Alternative behavior:** preserving detached services across SourceManager
+   shutdown is specified separately in
+   [service-persistence-and-startup-reconciliation.md](./service-persistence-and-startup-reconciliation.md).
