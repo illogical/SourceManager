@@ -159,6 +159,11 @@ export default function ServiceCard({
           {actionError ?? lifecycle.lastError}
         </div>
       ) : null}
+      {state === "starting" && lifecycle.recoveryReason ? (
+        <div className={styles.message} role="status">
+          {lifecycle.recoveryReason} (attempt {lifecycle.recoveryAttempt ?? 1} of 1)
+        </div>
+      ) : null}
     </article>
   )
 }

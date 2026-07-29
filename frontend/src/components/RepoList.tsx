@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react"
 import type { CSSProperties } from "react"
-import { Activity, RefreshCw, Server, ShieldAlert } from "lucide-react"
+import { Activity, RefreshCw, Server, ShieldAlert, TimerReset } from "lucide-react"
 import * as client from "../api/client"
-import type { LifecycleState, RepoSummary, TailscaleStatusResponse } from "../api/types"
+import type { LifecycleState, RepoSummary, StartupReconciliationStatus, TailscaleStatusResponse } from "../api/types"
 import ServiceCard from "./ServiceCard"
 import styles from "./RepoList.module.css"
 
@@ -20,6 +20,8 @@ export default function RepoList() {
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [tailscaleStatus, setTailscaleStatus] = useState<TailscaleStatusResponse | null>(null)
+  const [startup, setStartup] = useState<StartupReconciliationStatus | null>(null)
+  const [applicationState, setApplicationState] = useState<"running" | "shutting_down">("running")
 
   const fetchRepos = useCallback(async (manual = false) => {
     if (manual) setIsRefreshing(true)
@@ -48,6 +50,16 @@ export default function RepoList() {
     }
   }, [])
 
+  const fetchStartup = useCallback(async () => {
+    try {
+      const health = await client.getHealth()
+      setStartup(health.startupReconciliation)
+      setApplicationState(health.applicationState)
+    } catch {
+      // The main API error state is handled by fetchRepos.
+    }
+  }, [])
+
   useEffect(() => {
     void fetchRepos()
     void fetchTailscale()
@@ -58,6 +70,14 @@ export default function RepoList() {
     return () => clearInterval(interval)
   }, [fetchRepos, fetchTailscale])
 
+  useEffect(() => {
+    void fetchStartup()
+    const interval = setInterval(() => {
+      void fetchStartup()
+    }, startup?.state === "running" ? 500 : 1_000)
+    return () => clearInterval(interval)
+  }, [fetchStartup, startup?.state])
+
   // ── Action handlers ────────────────────────────────────────────────────────
 
   async function handleStart(repoId: string, serviceId: string) {
@@ -67,6 +87,13 @@ export default function RepoList() {
 
   async function handleStop(repoId: string, serviceId: string) {
     await client.stopService(repoId, serviceId)
+    try {
+      const health = await client.getHealth()
+      setApplicationState(health.applicationState)
+      if (health.applicationState === "shutting_down") return
+    } catch {
+      // Continue with normal refresh handling for a managed-service stop.
+    }
     await Promise.all([fetchRepos(), fetchTailscale()])
   }
 
@@ -118,6 +145,25 @@ export default function RepoList() {
 
   return (
     <div className={styles.dashboard}>
+      {applicationState === "shutting_down" && (
+        <section className={styles.shutdownBanner} role="alert">
+          SourceManager is shutting down. Managed services and their Tailnet advertisements will remain running.
+        </section>
+      )}
+      {startup?.state === "running" && (
+        <section className={styles.recoveryBanner} role="status" aria-live="polite">
+          <TimerReset aria-hidden="true" size={21} />
+          <div>
+            <strong>Restoring services from the previous SourceManager session</strong>
+            <span>
+              {startup.completed} of {startup.total} checked. Up to{" "}
+              {Math.max(0, Math.ceil(startup.remainingMs / 1000))}s remaining.
+              Services that do not recover will switch Off.
+            </span>
+          </div>
+          <progress value={startup.completed} max={Math.max(1, startup.total)} />
+        </section>
+      )}
       <section className={styles.overview} aria-label="Service overview">
         <div>
           <p className={styles.kicker}>Dashboard</p>

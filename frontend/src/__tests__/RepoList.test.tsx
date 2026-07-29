@@ -63,6 +63,32 @@ describe("RepoList", () => {
     expect(screen.getAllByText("1").length).toBeGreaterThan(0)
   })
 
+  it("shows startup recovery progress and remaining timeout", async () => {
+    vi.spyOn(client, "listRepos").mockResolvedValue({ repos: [makeRepo("recovering")] })
+    vi.spyOn(client, "getHealth").mockResolvedValue({
+      status: "ok",
+      version: "1.0.0",
+      uptimeMs: 100,
+      applicationState: "running",
+      startupReconciliation: {
+        state: "running",
+        startedAt: new Date().toISOString(),
+        deadlineAt: new Date(Date.now() + 4_000).toISOString(),
+        timeoutMs: 5_000,
+        total: 2,
+        completed: 1,
+        remainingMs: 4_000,
+        message: "Checking services",
+      },
+    })
+
+    await act(async () => { render(<RepoList />) })
+
+    expect(screen.getByText(/Restoring services/)).toBeInTheDocument()
+    expect(screen.getByText(/1 of 2 checked/)).toBeInTheDocument()
+    expect(screen.getByText(/4s remaining/)).toBeInTheDocument()
+  })
+
   it("hides zero-value project status counts", async () => {
     vi.spyOn(client, "listRepos").mockResolvedValue({ repos: [makeRepo("epsilon")] })
 

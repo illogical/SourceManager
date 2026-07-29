@@ -12,6 +12,7 @@ import {
   prepareTailscaleForStop,
   readMachineStatus,
   readServeConfig,
+  restoreTailscaleWhenReady,
   serviceNameToCliName,
   type TailscaleExecutor,
 } from "../../../src/services/tailscale"
@@ -139,6 +140,29 @@ describe("named Tailscale Service helpers", () => {
     expect(executor.calls).toEqual([
       ["serve", "get-config", "--all"],
       ["serve", "drain", "svc:devplanner-api"],
+    ])
+  })
+
+  it("repairs a saved-On but not-advertised service once with per-service Off then On", async () => {
+    const executor = new FakeExecutor({
+      "serve get-config --all": JSON.stringify({
+        services: {
+          "svc:devplanner-api": {
+            advertised: false,
+            endpoints: { "tcp:443": "http://127.0.0.1:17103" },
+          },
+        },
+      }),
+    })
+
+    await restoreTailscaleWhenReady(service, async () => true, executor, 1, 0)
+
+    expect(executor.calls).toEqual([
+      ["serve", "get-config", "--all"],
+      ["serve", "drain", "svc:devplanner-api"],
+      ["serve", "--service=svc:devplanner-api", "--https=443", "off"],
+      ["serve", "--service=svc:devplanner-api", "--https=443", "http://127.0.0.1:17103"],
+      ["serve", "advertise", "svc:devplanner-api"],
     ])
   })
 })

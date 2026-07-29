@@ -4,6 +4,49 @@
   gap: 22px;
 }
 
+.shutdownBanner {
+  padding: 14px 16px;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 8px;
+  color: #fee2e2;
+  background: rgba(127, 29, 29, 0.3);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.recoveryBanner {
+  display: grid;
+  grid-template-columns: auto 1fr minmax(100px, 180px);
+  align-items: center;
+  gap: 12px;
+  padding: 13px 15px;
+  border: 1px solid rgba(250, 204, 21, 0.3);
+  border-radius: 8px;
+  color: #fde68a;
+  background: rgba(113, 63, 18, 0.28);
+}
+
+.recoveryBanner div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recoveryBanner strong {
+  color: #fff7cc;
+  font-size: 0.9rem;
+}
+
+.recoveryBanner span {
+  color: #d9cda5;
+  font-size: 0.78rem;
+}
+
+.recoveryBanner progress {
+  width: 100%;
+  accent-color: #facc15;
+}
+
 .overview {
   display: flex;
   align-items: stretch;
@@ -254,6 +297,14 @@
 }
 
 @media (max-width: 560px) {
+  .recoveryBanner {
+    grid-template-columns: auto 1fr;
+  }
+
+  .recoveryBanner progress {
+    grid-column: 1 / -1;
+  }
+
   .repoHeader {
     flex-direction: column;
   }

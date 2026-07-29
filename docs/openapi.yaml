@@ -178,6 +178,17 @@ components:
         lastError:
           type: string
           example: Health check did not pass within 30s
+        diagnosticCode:
+          type: [string, 'null']
+          example: SERVICE_STARTUP_RECOVERY_FAILED
+        intendedState:
+          type: string
+          enum: [running, stopped]
+        recoveryAttempt:
+          type: [integer, 'null']
+          example: 1
+        recoveryReason:
+          type: [string, 'null']
 
     TailnetInfo:
       type: object
@@ -464,7 +475,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status, version, uptimeMs]
+                required: [status, version, uptimeMs, applicationState, startupReconciliation]
                 properties:
                   status:
                     type: string
@@ -475,6 +486,33 @@ paths:
                   uptimeMs:
                     type: integer
                     example: 86400000
+                  applicationState:
+                    type: string
+                    enum: [running, shutting_down]
+                  startupReconciliation:
+                    type: object
+                    required: [state, startedAt, deadlineAt, timeoutMs, total, completed, remainingMs, message]
+                    properties:
+                      state:
+                        type: string
+                        enum: [pending, running, complete]
+                      startedAt:
+                        type: [string, 'null']
+                        format: date-time
+                      deadlineAt:
+                        type: [string, 'null']
+                        format: date-time
+                      timeoutMs:
+                        type: integer
+                        example: 5000
+                      total:
+                        type: integer
+                      completed:
+                        type: integer
+                      remainingMs:
+                        type: integer
+                      message:
+                        type: string
 
   /swagger:
     get:
@@ -630,11 +668,54 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /v1/repos/{repoId}/services/{serviceId}/output:
+    get:
+      operationId: getServiceOutput
+      summary: Read durable combined service output
+      tags: [Lifecycle]
+      parameters:
+        - { name: repoId, in: path, required: true, schema: { type: string } }
+        - { name: serviceId, in: path, required: true, schema: { type: string } }
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, maximum: 262144 } }
+      responses:
+        '200':
+          description: Combined output chunk and next cursor.
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/repos/{repoId}/services/{serviceId}/output/stream:
+    get:
+      operationId: streamServiceOutput
+      summary: Stream durable combined service output
+      tags: [Lifecycle]
+      parameters:
+        - { name: repoId, in: path, required: true, schema: { type: string } }
+        - { name: serviceId, in: path, required: true, schema: { type: string } }
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Read-only Server-Sent Events output stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /v1/repos/{repoId}/services/{serviceId}/start:
     post:
       operationId: startService
       summary: Start a service
-      description: Spawns the service process. Auto-kills any conflicting process on the port.
+      description: Starts a detached verified runner. An unverified port listener is reported as an ownership conflict and is never killed.
       tags: [Lifecycle]
       parameters:
         - name: repoId

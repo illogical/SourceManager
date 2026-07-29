@@ -8,6 +8,19 @@
 
 ---
 
+## Superseded Scope and Reusable Future Work
+
+The preserve-and-reconcile alternative is implemented. SourceManager shutdown
+therefore does not execute the application-wide stop-on-shutdown behavior in
+this cancelled plan.
+
+The verified per-service stop flow remains the basis for a possible future
+**Shutdown all managed services** dashboard button. That action must be
+explicit, asynchronous, and separate from stopping SourceManager itself. It
+should show progress and errors for each service and Tailnet drain, continue
+after individual failures, and never kill an unverified ownership-conflict
+listener. No shutdown-all API or dashboard button is implemented yet.
+
 ## Objective
 
 Make SourceManager stop managed services reliably and visibly.

@@ -170,11 +170,15 @@ Manage it with:
 `Install` and `Uninstall` are idempotent. The script resolves its repository and
 Bun executable with absolute paths, keeps launcher transcripts under
 `data/logs/`, and reports the API and Vite listener status without showing
-secrets. Closing the terminal ends that development session; use `Start` to
-open it again.
+secrets. Closing the SourceManager terminal ends the dashboard/API session; use
+`Start` to open it again. Services started from SourceManager run behind
+detached per-service runners, so they and their named Tailnet advertisements
+intentionally continue running after Ctrl+C, terminal closure, or a
+SourceManager restart.
 
 The task only starts SourceManager. Managed applications remain controlled
-through the dashboard or lifecycle API.
+through the dashboard or lifecycle API and must be stopped individually when
+you want them to exit.
 
 ---
 
@@ -244,6 +248,8 @@ Requests without a valid token receive `401 Unauthorized`.
 | GET | `/v1/repos/:repoId` | Yes | Single repo detail |
 | GET | `/v1/repos/:repoId/services/:serviceId` | Yes | Service detail + lifecycle state |
 | GET | `/v1/repos/:repoId/services/:serviceId/logs` | Yes | Recent run log entries (`?n=20`) |
+| GET | `/v1/repos/:repoId/services/:serviceId/output` | Yes | Read durable combined service output |
+| GET | `/v1/repos/:repoId/services/:serviceId/output/stream` | Yes | Stream combined output with SSE |
 | POST | `/v1/repos/:repoId/services/:serviceId/start` | Yes | Start the service |
 | POST | `/v1/repos/:repoId/services/:serviceId/stop` | Yes | Stop the service (idempotent) |
 | POST | `/v1/repos/:repoId/services/:serviceId/restart` | Yes | Restart the service |
@@ -370,12 +376,26 @@ Logs older than 7 days are automatically deleted on startup.
 
 ## Process Lifecycle
 
-Services transition through four states: `starting` → `running` | `failed`, or `stopped`.
+Services transition through five states: `starting` → `running` | `failed`,
+`running` → `stopping` → `stopped` | `failed`, or `stopped`.
 
 - Only one process runs per port at any time.
-- Starting a service when its port is already in use **auto-kills** the existing process (logged with PID and result).
+- Services are launched by detached per-service runners. The runner captures
+  combined stdout/stderr in rotated files under `data/logs/services/` and
+  survives SourceManager shutdown.
+- Starting a service when its port belongs to an unverified process fails with
+  `SERVICE_PROCESS_OWNERSHIP_CONFLICT`; SourceManager never adopts or kills it.
 - After spawning, a background health poll runs every second (up to 30 s) to transition `starting` → `running` or `failed`.
-- Process state is persisted to `data/state.json` and restored across API restarts. Stale PIDs are pruned on startup; any service that was `starting` when SourceManager restarted is marked `failed`.
+- Process intent and verified launch identity are persisted to `data/state.json`.
+  On startup, SourceManager checks runner identity, process ownership, port, and
+  health. A verified survivor is restored without restarting.
+- After a Windows reboot or unclean exit, a service that was previously running
+  receives exactly one automatic recovery attempt with a five-second readiness
+  window. The dashboard shows the remaining time and progress. A timeout becomes
+  `SERVICE_STARTUP_RECOVERY_FAILED` and switches the service control Off.
+- Stopping SourceManager itself does not stop managed services or drain their
+  Tailnet advertisements. The SourceManager service card uses this same
+  self-shutdown behavior.
 
 ---
 
@@ -394,9 +414,9 @@ The project has two test runners:
 
 ```bash
 bun run test           # bun:test — config, middleware, services, routes (103 tests)
-bun run test:vitest    # Vitest — backend + frontend tests (141 tests)
-bun run test:frontend  # Vitest frontend only (54 tests, jsdom)
-bun run test:backend   # Vitest backend only (87 tests, node)
+bun run test:vitest    # Vitest — backend + frontend tests (173 tests)
+bun run test:frontend  # Vitest frontend only (63 tests, jsdom)
+bun run test:backend   # Vitest backend only (110 tests, node)
 bun run test:all       # all suites in sequence
 ```
 
@@ -425,7 +445,7 @@ Vitest runs separately to cover the backend config accessors, ProcessManager lif
 | `frontend/src/__tests__/LifecycleBadge.test.tsx` | Vitest/jsdom | Badge label and colour class for all five lifecycle states |
 | `frontend/src/__tests__/ActionButton.test.tsx` | Vitest/jsdom | Loading state, disabled state, variant classes |
 | `frontend/src/__tests__/ServiceCard.test.tsx` | Vitest/jsdom | Action dispatch, pending-action lock, error display, Tailnet URL |
-| `frontend/src/__tests__/RepoList.test.tsx` | Vitest/jsdom | Fetch on mount, 10 s polling, AuthError/ApiError banners, action wiring |
+| `frontend/src/__tests__/RepoList.test.tsx` | Vitest/jsdom | Fetch on mount, normal/recovery polling, recovery countdown, error banners |
 
 ### Watch mode
 
@@ -442,6 +462,7 @@ bunx vitest --project frontend  # watch frontend component tests with HMR
 ```
 src/
   index.ts              Entry point — mounts routes, swagger, static plugin, error handler
+  serviceRunner.ts      Detached managed-service runner and durable output capture
   config.ts             Config loader, validation, and accessors
   types.ts              TypeScript interfaces
   middleware/           Auth + request logging
@@ -451,6 +472,10 @@ src/
     health.ts           GET /health
   services/
     processManager.ts   Lifecycle state machine (starting/running/stopping/stopped/failed)
+    runnerProtocol.ts   Signed runner manifest/status/control contracts
+    serviceOutput.ts    Rotated output reads, SSE streaming, and retention
+    startupStatus.ts    Five-second startup reconciliation progress
+    applicationLifecycle.ts  SourceManager self-shutdown state
     git.ts              Git operations (status, checkout, pull, diff)
     healthCheck.ts      Health URL polling (ping and full modes)
     installer.ts        Package install with lockfile detection

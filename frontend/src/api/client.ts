@@ -6,6 +6,7 @@ import type {
   ConfigValidateResponse,
   ConfigApplyResponse,
   TailscaleStatusResponse,
+  HealthResponse,
 } from "./types"
 
 const TOKEN_KEY = "sm:token"
@@ -144,6 +145,12 @@ export function updateService(
 
 export function testConnection(): Promise<{ status: string }> {
   return apiFetch<{ status: string }>("/health")
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  const response = await fetch("/health")
+  if (!response.ok) throw new ApiError(response.status, await response.text())
+  return response.json() as Promise<HealthResponse>
 }
 
 // ── Config edit ────────────────────────────────────────────────────────────────

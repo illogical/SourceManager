@@ -37,7 +37,8 @@ related: []
 - Update endpoint accepts branch selection and mode overrides (install/restart/dry run) while enforcing no CLI injection.
 - APIs must report structured step outcomes, duration, and final status for chat-friendly summaries.
 - Process lifecycle endpoints: start, stop, and restart services independently of git updates.
-- Port conflict resolution: auto-kill existing process on the target port with error reporting.
+- Port conflict safety: refuse to start when the target port belongs to an
+  unverified process; never automatically adopt or kill it.
 - All requests and all run operations logged to daily-rotating NDJSON files.
 
 ## Acceptance criteria
@@ -149,6 +150,8 @@ Required runtime environment values are `SOURCEMANAGER_PORT`,
 | GET | `/v1/repos/:repoId` | Single repo detail with all services |
 | GET | `/v1/repos/:repoId/services/:serviceId` | Single service detail with lifecycle state |
 | GET | `/v1/repos/:repoId/services/:serviceId/logs` | Recent run log entries (`?n=20`, max 100) |
+| GET | `/v1/repos/:repoId/services/:serviceId/output` | Durable combined stdout/stderr chunks |
+| GET | `/v1/repos/:repoId/services/:serviceId/output/stream` | Read-only SSE output stream |
 | POST | `/v1/repos/:repoId/services/:serviceId/start` | Start the service process |
 | POST | `/v1/repos/:repoId/services/:serviceId/stop` | Stop the service process (idempotent) |
 | POST | `/v1/repos/:repoId/services/:serviceId/restart` | Restart (stop + start) the service |
@@ -189,7 +192,13 @@ Services transition through: `starting` → `running` | `failed`, `running` → 
 | `stopped` | Not running (never started or cleanly stopped) |
 | `failed` | Process exited before becoming ready, or health poll timed out |
 
-State is persisted to `data/state.json` after every change. On API restart, stale PIDs are pruned and any `starting` or `stopping` state is transitioned to `failed`.
+State, intended state, and versioned runner launch identity are persisted to
+`data/state.json` after every change. On API restart, SourceManager verifies the
+runner heartbeat, run identity, command fingerprint, listener ownership, and
+health. A previously running unavailable service receives one five-second
+automatic recovery attempt. The dashboard displays reconciliation progress and
+remaining time; a timeout is marked `SERVICE_STARTUP_RECOVERY_FAILED` and the
+local service control returns Off.
 
 ## Safe update state machine
 
@@ -208,12 +217,19 @@ Each step emits `{ step, status: "pending"|"success"|"failure"|"skipped", messag
 
 ## Process management
 
-- `ProcessManager` singleton tracks spawned processes by service ID (`Map<string, ServiceProcessState>`).
+- `ProcessManager` tracks detached per-service runners by service ID.
 - Port registry: `Map<number, string>` (port → serviceId) enforces one process per port.
-- **Port conflict on start**: auto-kills existing process (logged with PID + kill result), then starts new one.
+- **Port conflict on start**: an unverified listener is reported as
+  `SERVICE_PROCESS_OWNERSHIP_CONFLICT` and is never adopted or killed.
 - State persisted to `data/state.json` after every change; restored on API startup.
-- Stale PIDs detected via `process.kill(pid, 0)` and pruned on startup.
-- External processes on managed ports detected via `netstat -ano` (Windows).
+- PID liveness alone is never trusted because Windows can reuse PIDs.
+- Runner manifests, authenticated status/heartbeats, and control requests live
+  under `data/runtime/services/`; tokens are never returned by the API.
+- Combined stdout/stderr is durably rotated under `data/logs/services/` and can
+  be read historically or streamed read-only with SSE.
+- Ctrl+C, SIGTERM, terminal closure, and SourceManager's own Stop action flush
+  SourceManager state and close its server without signaling runners or changing
+  managed Tailnet advertisements.
 
 ## Response payload (update endpoint)
 

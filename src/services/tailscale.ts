@@ -362,7 +362,14 @@ export async function restoreTailscaleWhenReady(
         const config = await readServeConfig(executor)
         const current = config.services?.[serviceNameToCliName(named.serviceName)]
         const target = current?.endpoints?.[`tcp:${named.httpsPort}`]
-        if (target && normalizeTarget(target) === named.target) {
+        if (target && normalizeTarget(target) === named.target && current?.advertised === false) {
+          // One bounded repair for the stale saved-On/observed-Off state. This
+          // models the proven per-service Off then On recovery and never resets
+          // unrelated Serve configuration.
+          await disableTailscaleService(service, executor)
+          await enableTailscaleService(service, executor)
+          await advertiseTailscaleService(service, executor)
+        } else if (target && normalizeTarget(target) === named.target) {
           await advertiseTailscaleService(service, executor)
         } else {
           await enableTailscaleService(service, executor)

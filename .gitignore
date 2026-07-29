@@ -2,6 +2,7 @@
 data/projects.json
 data/state.json
 data/logs/
+data/runtime/
 
 # Dependencies
 node_modules/

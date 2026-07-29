@@ -42,7 +42,7 @@ vi.mock("../../../src/services/configEditor", () => ({
 
 vi.mock("../../../src/services/processManager", () => ({
   processManager: {
-    getProcess: vi.fn(() => ({
+    observe: vi.fn(async () => ({
       serviceId: service.id,
       repoId: repo.id,
       pid: 123,

@@ -18,7 +18,7 @@ import {
 import type { ServiceConfig } from "../types"
 
 async function isLocalServiceRunning(service: ServiceConfig): Promise<boolean> {
-  const process = processManager.getProcess(service.id)
+  const process = await processManager.observe(service)
   if (process) return process.lifecycleState === "running"
   return (await checkHealth(service)).status === "pass"
 }

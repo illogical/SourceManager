@@ -80,13 +80,38 @@ export type LifecycleState = "starting" | "running" | "stopping" | "stopped" | "
 export interface ServiceProcessState {
   serviceId: string
   repoId: string
+  /** Stable detached runner PID. Kept as `pid` for API compatibility. */
   pid: number
+  childPid?: number | null
   port: number
   startedAt: string    // ISO 8601
   command: string
   lifecycleState: LifecycleState
   readySince?: string  // ISO 8601; set when health first passes after start
   lastError?: string   // set when lifecycleState is "failed"
+  diagnosticCode?: "SERVICE_PROCESS_OWNERSHIP_CONFLICT" | "SERVICE_STARTUP_RECOVERY_FAILED" | "SERVICE_INTERRUPTED"
+  intendedState?: "running" | "stopped"
+  runId?: string
+  processCreatedAt?: string
+  commandFingerprint?: string
+  repoPath?: string
+  healthUrl?: string
+  logDirectory?: string
+  manifestPath?: string
+  lastVerifiedAt?: string
+  recoveryAttempt?: 1
+  recoveryReason?: string
+}
+
+export interface StartupReconciliationStatus {
+  state: "pending" | "running" | "complete"
+  startedAt: string | null
+  deadlineAt: string | null
+  timeoutMs: number
+  total: number
+  completed: number
+  remainingMs: number
+  message: string
 }
 
 // ── Port map entry ────────────────────────────────────────────────────────────

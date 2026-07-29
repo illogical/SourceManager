@@ -2,7 +2,6 @@ import Elysia, { NotFoundError } from "elysia"
 import { swagger } from "@elysiajs/swagger"
 import { staticPlugin } from "@elysiajs/static"
 import { loadConfig } from "./config"
-import { getService } from "./config"
 import { requestLoggerMiddleware } from "./middleware/requestLogger"
 import { healthRoute } from "./routes/health"
 import { reposRoute } from "./routes/repos"
@@ -13,13 +12,17 @@ import { processManager } from "./services/processManager"
 import { rotateOldLogs } from "./services/runLogger"
 import { RepoNotFoundError, ServiceNotFoundError } from "./config"
 import { validateToken } from "./middleware/auth"
-import { checkHealth } from "./services/healthCheck"
 import {
-  prepareTailscaleForStop,
   restoreTailscaleWhenReady,
   getNamedServiceConfig,
   tailscaleExecutor,
 } from "./services/tailscale"
+import {
+  getApplicationLifecycleState,
+  registerShutdownHandler,
+  requestSourceManagerShutdown,
+} from "./services/applicationLifecycle"
+import { pruneServiceOutputLogs } from "./services/serviceOutput"
 
 // ── Startup ────────────────────────────────────────────────────────────────
 
@@ -30,31 +33,19 @@ await Bun.write("data/logs/.keep", "")
 
 // Init process manager (restore state, prune stale PIDs)
 await processManager.init()
-
-processManager._onUnexpectedExit = async (serviceId) => {
-  const found = getService(serviceId)
-  if (found) await prepareTailscaleForStop(found.service, tailscaleExecutor)
-}
-
-// Reconcile without blocking API startup. Healthy desired-on services are
-// restored; stopped services are left drained.
 for (const repo of config.repos) {
   for (const service of repo.services) {
-    void checkHealth(service).then(async (health) => {
-      const named = getNamedServiceConfig(service)
-      if (health.status === "pass" && named?.desiredEnabled) {
-        await restoreTailscaleWhenReady(service, async () => true, tailscaleExecutor, 1, 0)
-      } else if (health.status === "fail") {
-        await prepareTailscaleForStop(service, tailscaleExecutor)
-      }
-    }).catch((err) => {
-      console.warn(`[Tailscale] Startup reconciliation failed for "${service.id}": ${(err as Error).message}`)
-    })
+    if (service.port === config.server.port && processManager.getProcess(service.id)) {
+      await processManager.forget(service.id)
+    }
   }
 }
 
 // Rotate old logs (keep 7 days)
 await rotateOldLogs()
+await pruneServiceOutputLogs(
+  processManager.getAllProcesses().flatMap((state) => state.logDirectory ? [state.logDirectory] : []),
+)
 
 // ── App ────────────────────────────────────────────────────────────────────
 
@@ -118,6 +109,10 @@ const app = new Elysia()
   .group("/v1", (app) =>
     app
       .onBeforeHandle(({ headers, set }) => {
+        if (getApplicationLifecycleState() === "shutting_down") {
+          set.status = 503
+          return { error: "SourceManager is shutting down" }
+        }
         if (!validateToken(headers as Record<string, string | undefined>)) {
           set.status = 401
           return { error: "Unauthorized: missing or invalid X-DevServer-Token" }
@@ -146,6 +141,15 @@ const app = new Elysia()
 
   .listen(config.server.port)
 
+registerShutdownHandler(async () => {
+  await processManager.flushState()
+  await app.stop()
+  process.exit(0)
+})
+
+process.on("SIGINT", () => { void requestSourceManagerShutdown() })
+process.on("SIGTERM", () => { void requestSourceManagerShutdown() })
+
 console.log(`
 ╔══════════════════════════════════════════════════╗
 ║          SourceManager API — Running             ║
@@ -156,3 +160,28 @@ console.log(`
   Started: ${new Date().toLocaleString().padEnd(38)}
 
 `)
+
+// Keep the API and dashboard available while prior launch records are checked.
+// Unhealthy services are not drained here: preserve-on-shutdown intentionally
+// leaves desired Tailnet advertisements untouched until local recovery succeeds
+// or a user explicitly stops/disables the service.
+const managedRepos = config.repos.map((repo) => ({
+  ...repo,
+  services: repo.services.filter((service) => service.port !== config.server.port),
+}))
+void processManager.reconcileStartup(managedRepos, {
+  onHealthyDesiredTailnet: async (service) => {
+    const named = getNamedServiceConfig(service)
+    if (named?.desiredEnabled) {
+      await restoreTailscaleWhenReady(service, async () => true, tailscaleExecutor, 1, 0)
+    }
+  },
+}).then(async () => {
+  await pruneServiceOutputLogs(
+    processManager.getAllProcesses().flatMap((state) =>
+      state.lifecycleState === "running" && state.logDirectory ? [state.logDirectory] : []
+    ),
+  )
+}).catch((err) => {
+  console.warn(`[SourceManager] Startup reconciliation failed: ${(err as Error).message}`)
+})

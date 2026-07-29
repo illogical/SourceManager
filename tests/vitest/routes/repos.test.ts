@@ -44,7 +44,9 @@ vi.mock("../../../src/config", () => ({
 vi.mock("../../../src/services/processManager", () => ({
   processManager: {
     getProcess: vi.fn((): ServiceProcessState | null => null),
+    observe: vi.fn(async (): Promise<ServiceProcessState | null> => null),
     getAllProcesses: vi.fn(() => []),
+    getOutput: vi.fn(() => null),
     isRunning: vi.fn(() => false),
     start: vi.fn(async () => ({ success: true, message: "Started", lifecycleState: "starting", pid: 1234 })),
     stop: vi.fn(async () => ({ success: true, alreadyStopped: false, message: "Stopped" })),
@@ -78,6 +80,8 @@ beforeEach(async () => {
     throw new Error(`Service not found: "${id}"`)
   })
   vi.spyOn(processManager, "getProcess").mockReturnValue(null)
+  vi.spyOn(processManager, "getOutput").mockReturnValue(null)
+  vi.spyOn(processManager, "observe").mockResolvedValue(null)
   vi.spyOn(processManager, "start").mockResolvedValue({ success: true, message: "Started", lifecycleState: "starting", pid: 1234 })
   vi.spyOn(processManager, "stop").mockResolvedValue({ success: true, alreadyStopped: false, message: "Stopped", lifecycleState: "stopped" })
   vi.spyOn(processManager, "restart").mockResolvedValue({ success: true, message: "Restarted", lifecycleState: "starting", pid: 1234 })
@@ -174,7 +178,7 @@ describe("GET /v1/repos/:repoId/services/:serviceId", () => {
     expect(body.lifecycle.state).toBe("stopped")
   })
 
-  it("reports an untracked service as running when its health check passes", async () => {
+  it("reports a healthy untracked service as an ownership conflict", async () => {
     const { checkHealth } = await import("../../../src/services/healthCheck")
     vi.mocked(checkHealth).mockResolvedValue({ status: "pass", durationMs: 6 })
 
@@ -182,9 +186,10 @@ describe("GET /v1/repos/:repoId/services/:serviceId", () => {
     const res = await app.handle(req("/repos/my-repo/services/my-repo-web"))
     expect(res.status).toBe(200)
     const body = (await res.json()) as { lifecycle: { state: string; pid: number | null; command: string | null } }
-    expect(body.lifecycle.state).toBe("running")
+    expect(body.lifecycle.state).toBe("failed")
     expect(body.lifecycle.pid).toBeNull()
     expect(body.lifecycle.command).toBeNull()
+    expect((body.lifecycle as { diagnosticCode?: string }).diagnosticCode).toBe("SERVICE_PROCESS_OWNERSHIP_CONFLICT")
   })
 
   it("returns 404 for unknown serviceId", async () => {
@@ -203,6 +208,15 @@ describe("GET /v1/repos/:repoId/services/:serviceId/logs", () => {
     expect(body.serviceId).toBe("my-repo-web")
     expect(body.count).toBe(0)
     expect(body.logs).toEqual([])
+  })
+})
+
+describe("GET /v1/repos/:repoId/services/:serviceId/output", () => {
+  it("returns 404 when no managed runner output exists", async () => {
+    const app = await buildApp()
+    const res = await app.handle(req("/repos/my-repo/services/my-repo-web/output"))
+    expect(res.status).toBe(404)
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("No managed output") })
   })
 })
 

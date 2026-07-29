@@ -3,6 +3,8 @@ import { getConfig, requireRepo, requireService } from "../config"
 import { processManager } from "../services/processManager"
 import { checkHealth } from "../services/healthCheck"
 import { readRecentLogs } from "../services/runLogger"
+import { readServiceOutput, streamServiceOutput } from "../services/serviceOutput"
+import { getApplicationLifecycleState, requestSourceManagerShutdown } from "../services/applicationLifecycle"
 import {
   prepareTailscaleForStop,
   restoreTailscaleWhenReady,
@@ -18,20 +20,46 @@ interface ServiceLifecycle {
   uptimeMs: number | null
   command: string | null
   lastError: string | null
+  diagnosticCode: string | null
+  intendedState: "running" | "stopped"
+  recoveryAttempt: number | null
+  recoveryReason: string | null
 }
 
 async function buildLifecycle(service: ServiceConfig): Promise<ServiceLifecycle> {
-  const state = processManager.getProcess(service.id)
+  if (service.port === getConfig().server.port) {
+    const shuttingDown = getApplicationLifecycleState() === "shutting_down"
+    return {
+      state: shuttingDown ? "stopping" : "running",
+      pid: process.pid,
+      startedAt: null,
+      readySince: null,
+      uptimeMs: null,
+      command: "SourceManager",
+      lastError: null,
+      diagnosticCode: null,
+      intendedState: "running",
+      recoveryAttempt: null,
+      recoveryReason: null,
+    }
+  }
+  const state = await processManager.observe(service)
   if (!state) {
     const health = await checkHealth(service)
     return {
-      state: health.status === "pass" ? "running" : "stopped",
+      state: health.status === "pass" ? "failed" : "stopped",
       pid: null,
       startedAt: null,
       readySince: health.status === "pass" ? new Date().toISOString() : null,
       uptimeMs: null,
       command: null,
-      lastError: null,
+      lastError: health.status === "pass"
+        ? "A healthy listener exists, but SourceManager cannot verify that it owns the process"
+        : null,
+      diagnosticCode: health.status === "pass" ? "SERVICE_PROCESS_OWNERSHIP_CONFLICT" : null,
+      intendedState: "stopped",
+      recoveryAttempt: null,
+      recoveryReason: null,
     }
   }
   const uptimeMs = state.lifecycleState === "running" && state.readySince
@@ -45,6 +73,10 @@ async function buildLifecycle(service: ServiceConfig): Promise<ServiceLifecycle>
     uptimeMs,
     command: state.command,
     lastError: state.lastError ?? null,
+    diagnosticCode: state.diagnosticCode ?? null,
+    intendedState: state.intendedState ?? (state.lifecycleState === "running" ? "running" : "stopped"),
+    recoveryAttempt: state.recoveryAttempt ?? null,
+    recoveryReason: state.recoveryReason ?? null,
   }
 }
 
@@ -159,11 +191,68 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
   )
 
   // POST /repos/:repoId/services/:serviceId/start
+  .get(
+    "/:repoId/services/:serviceId/output",
+    async ({ params, query, set }) => {
+      const repo = requireRepo(params.repoId)
+      const { service } = requireService(params.serviceId)
+      if (!repo.services.some((candidate) => candidate.id === service.id)) throw new Error("Service does not belong to repository")
+      const output = processManager.getOutput(service.id)
+      if (!output) {
+        set.status = 404
+        return { error: "No managed output is available for this service" }
+      }
+      return readServiceOutput(
+        output.runId,
+        output.logDirectory,
+        query.cursor ?? "",
+        query.limit ?? 64 * 1024,
+      )
+    },
+    {
+      params: t.Object({ repoId: t.String(), serviceId: t.String() }),
+      query: t.Object({ cursor: t.Optional(t.String()), limit: t.Optional(t.Numeric()) }),
+      detail: { summary: "Read durable combined service output", tags: ["Lifecycle"] },
+    },
+  )
+
+  .get(
+    "/:repoId/services/:serviceId/output/stream",
+    ({ params, query, set }) => {
+      const repo = requireRepo(params.repoId)
+      const { service } = requireService(params.serviceId)
+      if (!repo.services.some((candidate) => candidate.id === service.id)) throw new Error("Service does not belong to repository")
+      const output = processManager.getOutput(service.id)
+      if (!output) {
+        set.status = 404
+        return { error: "No managed output is available for this service" }
+      }
+      return streamServiceOutput(output.runId, output.logDirectory, query.cursor ?? "")
+    },
+    {
+      params: t.Object({ repoId: t.String(), serviceId: t.String() }),
+      query: t.Object({ cursor: t.Optional(t.String()) }),
+      detail: { summary: "Stream durable combined service output with SSE", tags: ["Lifecycle"] },
+    },
+  )
+
+  // POST /repos/:repoId/services/:serviceId/start
   .post(
     "/:repoId/services/:serviceId/start",
     async ({ params, set }) => {
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
+      if (service.port === getConfig().server.port) {
+        return {
+          serviceId: service.id,
+          repoId: repo.id,
+          success: true,
+          message: "SourceManager is already running",
+          diagnostics: null,
+          portKillResult: null,
+          lifecycle: await buildLifecycle(service),
+        }
+      }
       const result = await processManager.start(repo, service)
       if (result.success) {
         void restoreTailscaleWhenReady(
@@ -172,7 +261,9 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
           tailscaleExecutor,
         )
       }
-      if (!result.success) set.status = 500
+      if (!result.success) {
+        set.status = result.diagnostics?.code === "SERVICE_PROCESS_OWNERSHIP_CONFLICT" ? 409 : 500
+      }
       return {
         serviceId: service.id,
         repoId: repo.id,
@@ -195,9 +286,25 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
     async ({ params, set }) => {
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
+      if (service.port === getConfig().server.port) {
+        void requestSourceManagerShutdown()
+        set.status = 202
+        return {
+          serviceId: service.id,
+          repoId: repo.id,
+          success: true,
+          alreadyStopped: false,
+          message: "SourceManager is shutting down; managed services and Tailnet advertisements will remain running",
+          diagnostics: null,
+          tailnetPreparation: { success: true, warning: null },
+          lifecycle: { ...await buildLifecycle(service), state: "stopping" as const },
+        }
+      }
       const tailnetPreparation = await prepareTailscaleForStop(service, tailscaleExecutor)
       const result = await processManager.stop(service, repo)
-      if (!result.success) set.status = 500
+      if (!result.success) {
+        set.status = result.diagnostics?.code === "SERVICE_PROCESS_OWNERSHIP_CONFLICT" ? 409 : 500
+      }
       return {
         serviceId: service.id,
         repoId: repo.id,
@@ -221,6 +328,19 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
     async ({ params, set }) => {
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
+      if (service.port === getConfig().server.port) {
+        set.status = 409
+        return {
+          serviceId: service.id,
+          repoId: repo.id,
+          success: false,
+          message: "SourceManager cannot restart itself in place; stop it, then use the Windows task or terminal launcher to start it again",
+          diagnostics: null,
+          portKillResult: null,
+          tailnetPreparation: { success: true, warning: null },
+          lifecycle: await buildLifecycle(service),
+        }
+      }
       const tailnetPreparation = await prepareTailscaleForStop(service, tailscaleExecutor)
       const result = await processManager.restart(repo, service)
       if (result.success) {

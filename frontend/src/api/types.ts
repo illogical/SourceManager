@@ -10,6 +10,29 @@ export interface Lifecycle {
   uptimeMs: number | null
   command: string | null
   lastError: string | null
+  diagnosticCode?: string | null
+  intendedState?: "running" | "stopped"
+  recoveryAttempt?: number | null
+  recoveryReason?: string | null
+}
+
+export interface StartupReconciliationStatus {
+  state: "pending" | "running" | "complete"
+  startedAt: string | null
+  deadlineAt: string | null
+  timeoutMs: number
+  total: number
+  completed: number
+  remainingMs: number
+  message: string
+}
+
+export interface HealthResponse {
+  status: string
+  version: string
+  uptimeMs: number
+  applicationState: "running" | "shutting_down"
+  startupReconciliation: StartupReconciliationStatus
 }
 
 // ── Tailnet ────────────────────────────────────────────────────────────────────

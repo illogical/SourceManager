@@ -1,6 +1,6 @@
 # Preserve Managed Services and Reconcile on Startup
 
-**Status:** Alternative planning proposal
+**Status:** Implemented
 **Priority:** High
 **Scope:** Detached process ownership, durable process output, startup reconciliation, automatic one-time recovery, persistent Tailnet advertisement
 **Alternative to:** [Service Stop Functionality Improvement Plan](./service-stop-functionality.md)
@@ -207,8 +207,15 @@ Use:
 data/logs/services/<serviceId>/<runId>/
   output-0001.log
   output-0002.log
+
+data/runtime/services/<serviceId>/<runId>/
+  manifest.json
   runner-status.json
+  control.json
 ```
+
+Runtime identity and control files remain in the private runtime directory;
+output files contain no control token.
 
 Requirements:
 
@@ -250,6 +257,15 @@ the verified runner. No stdout pipe or terminal reattachment is required.
 Run reconciliation after configuration and persisted state load. API startup
 should remain available, but affected services must show an explicit recovery
 state until their checks finish.
+
+The reconciliation health window is five seconds per service. While it runs,
+`GET /health` exposes the deadline, remaining milliseconds, and completed/total
+counts. The dashboard polls this state twice per second and shows a countdown.
+When a previously running service does not recover in that window, its lifecycle
+is `failed` with `SERVICE_STARTUP_RECOVERY_FAILED`, its intended local state is
+persisted as `stopped`, and its Start/Stop control is shown Off. This bounded
+behavior is particularly important after a Windows reboot, when all detached
+processes from the prior session are expected to be gone.
 
 For every configured service:
 
@@ -482,3 +498,21 @@ The preserve-on-shutdown alternative simplifies SourceManager exit but is not
 the smaller overall implementation. Reliable ownership recovery, offline log
 capture, rotation, and safe conflict handling require the detached runner and
 verified launch-record design described above.
+
+---
+
+## Future Shutdown-All Dashboard Action
+
+A future dashboard action may explicitly stop all verified managed services and
+their Tailnet advertisements without changing SourceManager's normal shutdown
+semantics. It should:
+
+1. accept one asynchronous shutdown-all request
+2. process every service independently so one failure does not block the rest
+3. publish per-service Tailnet drain, runner stop, and stop-verification progress
+4. keep a visible summary of successes and actionable failures
+5. never stop or kill an ownership-conflict listener
+6. provide a separate final action to shut down SourceManager itself
+
+This is future work. Ctrl+C, SIGTERM, terminal closure, and the SourceManager
+service card's own Stop action continue to preserve managed services.
