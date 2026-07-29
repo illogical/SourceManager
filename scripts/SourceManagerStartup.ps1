@@ -150,6 +150,25 @@ function Write-PortStatus {
     }
 }
 
+function Assert-DevelopmentPortsAvailable {
+    $ports = Get-ConfiguredPorts
+    $occupied = @()
+
+    foreach ($entry in @(
+        [PSCustomObject] @{ Name = "API"; Port = $ports.Api },
+        [PSCustomObject] @{ Name = "Vite"; Port = $ports.Frontend }
+    )) {
+        $listenerPids = @(Get-PortListenerPids -Port $entry.Port)
+        if ($listenerPids.Count -gt 0) {
+            $occupied += "$($entry.Name) port $($entry.Port) (PID $($listenerPids -join ', '))"
+        }
+    }
+
+    if ($occupied.Count -gt 0) {
+        throw "SourceManager cannot start because the following listeners already exist: $($occupied -join '; '). Stop the existing SourceManager instance and try again."
+    }
+}
+
 function Stop-SourceManagerTask {
     $task = Get-RegisteredSourceManagerTask
     if ($null -eq $task) {
@@ -294,6 +313,8 @@ function Run-SourceManager {
         Write-Host ""
 
         Set-Location -LiteralPath $RepoRoot
+        Assert-DevelopmentPortsAvailable
+        Write-Host "API and Vite ports are available."
         & $bunPath run dev
         $exitCode = $LASTEXITCODE
 

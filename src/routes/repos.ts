@@ -4,7 +4,6 @@ import { processManager } from "../services/processManager"
 import { checkHealth } from "../services/healthCheck"
 import { readRecentLogs } from "../services/runLogger"
 import { readServiceOutput, streamServiceOutput } from "../services/serviceOutput"
-import { getApplicationLifecycleState, requestSourceManagerShutdown } from "../services/applicationLifecycle"
 import {
   prepareTailscaleForStop,
   restoreTailscaleWhenReady,
@@ -28,9 +27,8 @@ interface ServiceLifecycle {
 
 async function buildLifecycle(service: ServiceConfig): Promise<ServiceLifecycle> {
   if (service.port === getConfig().server.port) {
-    const shuttingDown = getApplicationLifecycleState() === "shutting_down"
     return {
-      state: shuttingDown ? "stopping" : "running",
+      state: "running",
       pid: process.pid,
       startedAt: null,
       readySince: null,
@@ -287,17 +285,16 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
       if (service.port === getConfig().server.port) {
-        void requestSourceManagerShutdown()
-        set.status = 202
+        set.status = 409
         return {
           serviceId: service.id,
           repoId: repo.id,
-          success: true,
+          success: false,
           alreadyStopped: false,
-          message: "SourceManager is shutting down; managed services and Tailnet advertisements will remain running",
+          message: "Stop SourceManager with Ctrl+C or the Windows task launcher",
           diagnostics: null,
           tailnetPreparation: { success: true, warning: null },
-          lifecycle: { ...await buildLifecycle(service), state: "stopping" as const },
+          lifecycle: await buildLifecycle(service),
         }
       }
       const tailnetPreparation = await prepareTailscaleForStop(service, tailscaleExecutor)

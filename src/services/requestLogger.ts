@@ -1,6 +1,11 @@
 import { join } from "path"
+import { dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+import { appendFile, mkdir } from "node:fs/promises"
 
-const LOG_DIR = join(import.meta.dir, "..", "..", "data", "logs")
+const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
+const LOG_DIR = join(_dir, "..", "..", "data", "logs")
+let appendQueue: Promise<void> = Promise.resolve()
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10)
@@ -37,6 +42,10 @@ export async function logRequest(entry: RequestLogEntry): Promise<void> {
   const line = JSON.stringify(safeEntry) + "\n"
   const path = requestLogPath()
 
-  const existing = await Bun.file(path).exists() ? await Bun.file(path).text() : ""
-  await Bun.write(path, existing + line)
+  const write = appendQueue.then(async () => {
+    await mkdir(LOG_DIR, { recursive: true })
+    await appendFile(path, line, "utf8")
+  })
+  appendQueue = write.catch(() => {})
+  await write
 }

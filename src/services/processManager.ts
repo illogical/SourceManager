@@ -1,6 +1,6 @@
 import { join, dirname } from "path"
 import { fileURLToPath } from "url"
-import { readFile, writeFile, mkdir, chmod } from "node:fs/promises"
+import { readFile, writeFile, mkdir, chmod, rename } from "node:fs/promises"
 import { spawn } from "node:child_process"
 import { detectPackageManager } from "./installer"
 import { checkHealth } from "./healthCheck"
@@ -105,6 +105,7 @@ export class ProcessManager {
   private processes = new Map<string, ServiceProcessState>()
   private portMap = new Map<number, string>() // port → serviceId
   private outputs = new Map<string, { runId: string; logDirectory: string }>()
+  private stateWriteQueue: Promise<void> = Promise.resolve()
 
   // ── Overridable for testing ──────────────────────────────────────────────────
 
@@ -136,6 +137,7 @@ export class ProcessManager {
     (state, service) => this.verifyRunnerIdentity(state, service)
   _requestRunnerStop: (state: ServiceProcessState) => Promise<{ success: boolean; error?: string }> =
     (state) => this.requestRunnerStop(state)
+  _restrictRuntimePermissions: (directories: string[]) => Promise<void> = restrictRuntimePermissions
   _stopPollIntervalMs = STOP_POLL_INTERVAL_MS
   _stopPollTimeoutMs = STOP_POLL_TIMEOUT_MS
   _healthPollIntervalMs = HEALTH_POLL_INTERVAL_MS
@@ -196,12 +198,17 @@ export class ProcessManager {
       processes: Object.fromEntries(this.processes),
       outputs: Object.fromEntries(this.outputs),
     }
-    try {
+    const serialized = JSON.stringify(data, null, 2)
+    const temporaryPath = `${STATE_PATH}.${process.pid}.tmp`
+    const write = this.stateWriteQueue.then(async () => {
       await mkdir(dirname(STATE_PATH), { recursive: true })
-      await writeFile(STATE_PATH, JSON.stringify(data, null, 2))
-    } catch (err) {
+      await writeFile(temporaryPath, serialized)
+      await rename(temporaryPath, STATE_PATH)
+    })
+    this.stateWriteQueue = write.catch(() => {})
+    await write.catch((err) => {
       console.warn(`[ProcessManager] Could not save state: ${(err as Error).message}`)
-    }
+    })
   }
 
   // ── Lifecycle state helpers ──────────────────────────────────────────────────
@@ -347,7 +354,7 @@ export class ProcessManager {
       await mkdir(logDirectory, { recursive: true, mode: 0o700 })
       await writeFile(manifestPath, JSON.stringify(manifest, null, 2), { mode: 0o600 })
       await chmod(manifestPath, 0o600).catch(() => {})
-      await restrictRuntimePermissions([runDirectory, logDirectory])
+      await this._restrictRuntimePermissions([runDirectory, logDirectory])
       proc = this._spawnProcess([process.execPath, RUNNER_PATH, manifestPath], {
         detached: true,
         windowsHide: true,
@@ -1071,15 +1078,21 @@ async function restrictRuntimePermissions(directories: string[]): Promise<void> 
   const username = process.env.USERNAME
   if (!username) throw new Error("USERNAME is required to secure service runner files")
   for (const directory of directories) {
-    const proc = Bun.spawn(
-      ["icacls", directory, "/inheritance:r", "/grant:r", `${username}:(OI)(CI)F`],
-      { stdout: "pipe", stderr: "pipe", windowsHide: true },
+    const proc = spawn(
+      "icacls",
+      [directory, "/inheritance:r", "/grant:r", `${username}:(OI)(CI)F`],
+      { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
     )
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
+    let stdout = ""
+    let stderr = ""
+    proc.stdout?.setEncoding("utf8")
+    proc.stderr?.setEncoding("utf8")
+    proc.stdout?.on("data", (chunk: string) => { stdout += chunk })
+    proc.stderr?.on("data", (chunk: string) => { stderr += chunk })
+    const code = await new Promise<number>((resolve, reject) => {
+      proc.once("exit", (value) => resolve(value ?? 1))
+      proc.once("error", reject)
+    })
     if (code !== 0) {
       throw new Error(`Could not secure runner directory: ${stderr.trim() || stdout.trim() || `icacls exited ${code}`}`)
     }

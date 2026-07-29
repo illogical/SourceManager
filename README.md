@@ -99,18 +99,19 @@ Edit `data/projects.json`. Repository paths are relative to the workspace:
 bun run dev
 ```
 
-This starts two processes concurrently:
+This starts two top-level processes with SourceManager's Windows-safe launcher:
 
 | Process | Command | URL |
 |---------|---------|-----|
-| API (Bun `--watch`) | `bun run dev:backend` | `http://localhost:<SOURCEMANAGER_PORT>` |
-| Frontend (Vite HMR) | `bun run dev:frontend` | `http://localhost:<server.frontendPort>` (`5173` if omitted) |
+| API | `bun run src/index.ts` | `http://localhost:<SOURCEMANAGER_PORT>` |
+| Frontend (Vite HMR) | `bun x vite --config frontend/vite.config.ts` | `http://localhost:<server.frontendPort>` (`5173` if omitted) |
 
 Open the configured frontend URL in your browser. Bun automatically loads
 `.env` and an optional `.env.local` override. Vite reads `server.frontendPort` from
 `data/projects.json` and proxies `/v1/*`, `/health`, and `/swagger` to
-`SOURCEMANAGER_PORT`, so the backend port is defined once. Both servers support
-hot reload.
+`SOURCEMANAGER_PORT`, so the backend port is defined once. Vite supports hot
+reload. For manual backend-only development with source watching, run
+`bun run dev:backend` in a separate terminal.
 
 **4. Build and run in production**
 

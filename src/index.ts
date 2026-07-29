@@ -17,11 +17,6 @@ import {
   getNamedServiceConfig,
   tailscaleExecutor,
 } from "./services/tailscale"
-import {
-  getApplicationLifecycleState,
-  registerShutdownHandler,
-  requestSourceManagerShutdown,
-} from "./services/applicationLifecycle"
 import { pruneServiceOutputLogs } from "./services/serviceOutput"
 
 // ── Startup ────────────────────────────────────────────────────────────────
@@ -109,10 +104,6 @@ const app = new Elysia()
   .group("/v1", (app) =>
     app
       .onBeforeHandle(({ headers, set }) => {
-        if (getApplicationLifecycleState() === "shutting_down") {
-          set.status = 503
-          return { error: "SourceManager is shutting down" }
-        }
         if (!validateToken(headers as Record<string, string | undefined>)) {
           set.status = 401
           return { error: "Unauthorized: missing or invalid X-DevServer-Token" }
@@ -140,15 +131,6 @@ const app = new Elysia()
   })
 
   .listen(config.server.port)
-
-registerShutdownHandler(async () => {
-  await processManager.flushState()
-  await app.stop()
-  process.exit(0)
-})
-
-process.on("SIGINT", () => { void requestSourceManagerShutdown() })
-process.on("SIGTERM", () => { void requestSourceManagerShutdown() })
 
 console.log(`
 ╔══════════════════════════════════════════════════╗

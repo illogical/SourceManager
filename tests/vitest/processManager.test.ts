@@ -57,6 +57,7 @@ function makePm() {
   }))
   pm._verifyRunnerIdentity = vi.fn(async (state, service) => pm._verifyLaunchRecord(state, service))
   pm._requestRunnerStop = vi.fn(async () => ({ success: true }))
+  pm._restrictRuntimePermissions = vi.fn(async () => {})
   pm._logLifecycleRun = vi.fn(async () => {})
   pm._stopPollIntervalMs = 1
   pm._stopPollTimeoutMs = 5

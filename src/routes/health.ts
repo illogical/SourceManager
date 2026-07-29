@@ -1,6 +1,5 @@
 import Elysia, { t } from "elysia"
 import { getStartupReconciliationStatus } from "../services/startupStatus"
-import { getApplicationLifecycleState } from "../services/applicationLifecycle"
 
 const startedAt = Date.now()
 
@@ -10,7 +9,7 @@ export const healthRoute = new Elysia().get(
     status: "ok",
     version: "1.0.0",
     uptimeMs: Date.now() - startedAt,
-    applicationState: getApplicationLifecycleState(),
+    applicationState: "running" as const,
     startupReconciliation: getStartupReconciliationStatus(),
   }),
   {

@@ -3,6 +3,7 @@ import type { ServiceConfig } from "../../../src/types"
 import {
   advertiseTailscaleService,
   checkTailscaleService,
+  clearTailscaleServiceMessages,
   disableTailscaleService,
   drainTailscaleService,
   enableTailscaleService,
@@ -164,5 +165,60 @@ describe("named Tailscale Service helpers", () => {
       ["serve", "--service=svc:devplanner-api", "--https=443", "http://127.0.0.1:17103"],
       ["serve", "advertise", "svc:devplanner-api"],
     ])
+  })
+
+  it("does not re-advertise an already connected matching service", async () => {
+    const executor = new FakeExecutor({
+      "serve get-config --all": JSON.stringify({
+        services: {
+          "svc:devplanner-api": {
+            advertised: true,
+            endpoints: { "tcp:443": "http://127.0.0.1:17103" },
+          },
+        },
+      }),
+    })
+
+    await restoreTailscaleWhenReady(service, async () => true, executor, 1, 0)
+
+    expect(executor.calls).toEqual([
+      ["serve", "get-config", "--all"],
+    ])
+  })
+
+  it("reports an observed connected service despite a stale command error", async () => {
+    const serviceWithStaleError = { ...service, id: "devplanner-api-stale-error" }
+    const failingExecutor: TailscaleExecutor = {
+      async execute() {
+        throw new Error("NoState")
+      },
+    }
+    await expect(advertiseTailscaleService(serviceWithStaleError, failingExecutor))
+      .rejects.toThrow("NoState")
+
+    const result = checkTailscaleService(
+      serviceWithStaleError,
+      true,
+      {
+        state: "connected",
+        backendState: "Running",
+        tailnetDomain: "bangus-city.ts.net",
+        tags: ["tag:dev-service-host"],
+        serviceHostCapability: {},
+        error: null,
+      },
+      {
+        services: {
+          "svc:devplanner-api": {
+            advertised: true,
+            endpoints: { "tcp:443": "http://127.0.0.1:17103" },
+          },
+        },
+      },
+    )
+
+    expect(result.status).toBe("connected")
+    expect(result.lastError).toBeNull()
+    clearTailscaleServiceMessages(serviceWithStaleError.id)
   })
 })

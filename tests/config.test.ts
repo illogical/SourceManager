@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test"
+import { resolve } from "node:path"
 import {
   loadEnvironmentConfig,
   resolveRepoPaths,
@@ -279,7 +280,7 @@ describe("environment configuration and repo resolution", () => {
     expect(result).toEqual({
       port: 18080,
       token: "environment-token",
-      workspacePath: "/localdev/projects",
+      workspacePath: resolve("/localdev/projects"),
     })
   })
 
@@ -316,8 +317,8 @@ describe("environment configuration and repo resolution", () => {
     resolveRepoPaths(local)
     resolveRepoPaths(secondLocalMachine)
 
-    expect(local.repos[0].repoPath).toBe("/Users/example/projects/my-app")
-    expect(secondLocalMachine.repos[0].repoPath).toBe("/localdev/projects/my-app")
+    expect(local.repos[0].repoPath).toBe(resolve("/Users/example/projects/my-app"))
+    expect(secondLocalMachine.repos[0].repoPath).toBe(resolve("/localdev/projects/my-app"))
   })
 
   it("rejects absolute and escaping repo paths", () => {

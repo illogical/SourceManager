@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently --kill-others --kill-timeout 3000 --names backend,frontend \"bun run dev:backend\" \"bun run dev:frontend\"",
+    "dev": "bun run src/devLauncher.ts",
     "dev:backend": "bun run --watch src/index.ts",
     "dev:frontend": "bunx vite --config frontend/vite.config.ts",
     "start": "bun run src/index.ts",

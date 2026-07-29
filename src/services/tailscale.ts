@@ -235,18 +235,19 @@ export function checkTailscaleService(
   let status: TailscaleServiceState
 
   if (operation === "draining") status = "draining"
-  else if (lastError) status = "error"
   else if (!localRunning) status = "local_stopped"
   else if (machine.state === "unavailable") status = "unavailable"
   else if (!configured || !endpointTarget) status = "not_advertised"
   else if (!targetMatches) status = "mismatch"
   else if (configured.advertised === false) status = "not_advertised"
   else if (isPendingApproval(machine.serviceHostCapability, cliName)) status = "pending_approval"
+  else if (lastError && configured.advertised !== true) status = "error"
   else status = "connected"
 
   const observedWarning = status === "connected" && !named.desiredEnabled
     ? "Tailnet is advertised but the saved desired state is off; turn it on to preserve exposure across restarts"
     : lastWarning
+  const observedError = status === "connected" ? null : lastError
 
   return {
     serviceId: service.id,
@@ -257,7 +258,7 @@ export function checkTailscaleService(
     localTarget: named.target,
     httpsPort: named.httpsPort,
     status,
-    lastError,
+    lastError: observedError,
     lastWarning: observedWarning,
     operation,
     canToggle: localRunning && machine.state !== "unavailable" && operation === null,
@@ -369,11 +370,18 @@ export async function restoreTailscaleWhenReady(
           await disableTailscaleService(service, executor)
           await enableTailscaleService(service, executor)
           await advertiseTailscaleService(service, executor)
-        } else if (target && normalizeTarget(target) === named.target) {
+        } else if (
+          target
+          && normalizeTarget(target) === named.target
+          && current?.advertised !== true
+        ) {
           await advertiseTailscaleService(service, executor)
         } else {
-          await enableTailscaleService(service, executor)
+          if (!target || normalizeTarget(target) !== named.target) {
+            await enableTailscaleService(service, executor)
+          }
         }
+        clearTailscaleServiceMessages(service.id)
       } catch (err) {
         errorByService.set(service.id, safeError(err))
       }

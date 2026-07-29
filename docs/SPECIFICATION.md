@@ -227,9 +227,12 @@ Each step emits `{ step, status: "pending"|"success"|"failure"|"skipped", messag
   under `data/runtime/services/`; tokens are never returned by the API.
 - Combined stdout/stderr is durably rotated under `data/logs/services/` and can
   be read historically or streamed read-only with SSE.
-- Ctrl+C, SIGTERM, terminal closure, and SourceManager's own Stop action flush
-  SourceManager state and close its server without signaling runners or changing
-  managed Tailnet advertisements.
+- The development launcher handles Ctrl+C and SIGTERM with a bounded shutdown
+  of only the SourceManager API and Vite PIDs. It never uses Windows
+  `taskkill /T`, so detached managed runners and their Tailnet advertisements
+  remain running.
+- Process state is written with atomic replacement so abrupt launcher or machine
+  shutdown cannot leave a partially written `data/state.json`.
 
 ## Response payload (update endpoint)
 
