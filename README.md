@@ -116,14 +116,12 @@ reload. For manual backend-only development with source watching, run
 **4. Build and run in production**
 
 ```bash
-# Build the frontend once
-bun run frontend:build
-
-# Start the API (serves the built dashboard + API on one port)
+# Start the server (rebuilds a missing or stale frontend automatically)
 bun run start
 ```
 
-After building, `bun run start` serves everything on the configured
+`bun run start` rebuilds `frontend/dist` when it is missing or older than the
+frontend sources, then serves everything on the configured
 `SOURCEMANAGER_PORT`:
 - `/` → React dashboard (static files from `frontend/dist/`)
 - `/v1/*` → authenticated API
@@ -350,6 +348,7 @@ Runtime values are configured in environment files:
 | `port` | Yes | Port the service runs on |
 | `healthUrl` | Yes | URL to check after updates |
 | `healthMode` | No | `ping` (default) or `full` |
+| `recoveryTimeoutSeconds` | No | Initial readiness threshold before the service remains Recovering in the background (default `30`, range `1`–`600`) |
 | `packageManager` | No | `auto` (default), `bun`, `npm`, `yarn`, `pnpm` |
 | `scriptName` | No | package.json script to run (default: `dev`) |
 | `installCommand` | No | Override install command entirely |
@@ -377,8 +376,9 @@ Logs older than 7 days are automatically deleted on startup.
 
 ## Process Lifecycle
 
-Services transition through five states: `starting` → `running` | `failed`,
-`running` → `stopping` → `stopped` | `failed`, or `stopped`.
+Services transition through six states: `starting` or `recovering` →
+`running` | `failed`, `running` → `stopping` → `stopped` | `failed`, or
+`stopped`.
 
 - Only one process runs per port at any time.
 - Services are launched by detached per-service runners. The runner captures
@@ -386,14 +386,17 @@ Services transition through five states: `starting` → `running` | `failed`,
   survives SourceManager shutdown.
 - Starting a service when its port belongs to an unverified process fails with
   `SERVICE_PROCESS_OWNERSHIP_CONFLICT`; SourceManager never adopts or kills it.
-- After spawning, a background health poll runs every second (up to 30 s) to transition `starting` → `running` or `failed`.
+- After spawning, health is checked for the service's readiness threshold
+  (`recoveryTimeoutSeconds`, default 30). A live verified process remains
+  `recovering` and continues checking every two seconds after that threshold.
 - Process intent and verified launch identity are persisted to `data/state.json`.
   On startup, SourceManager checks runner identity, process ownership, port, and
   health. A verified survivor is restored without restarting.
-- After a Windows reboot or unclean exit, a service that was previously running
-  receives exactly one automatic recovery attempt with a five-second readiness
-  window. The dashboard shows the remaining time and progress. A timeout becomes
-  `SERVICE_STARTUP_RECOVERY_FAILED` and switches the service control Off.
+- After a Windows reboot or unclean exit, previously running services are
+  restored through a two-worker queue. A slow verified runner remains
+  `recovering`, keeps intended state Running, and transitions to `running` as
+  soon as health passes. Only exit, lost identity, ownership conflict, or a
+  definitive launch error marks it failed.
 - Stopping SourceManager itself does not stop managed services or drain their
   Tailnet advertisements. The SourceManager service card uses this same
   self-shutdown behavior.

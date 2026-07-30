@@ -245,6 +245,15 @@ function validateService(svc: ServiceConfig, repoId: string, serviceIds: Set<str
     abort(`Service "${svc.id}" healthMode must be "ping" or "full"`)
   }
 
+  svc.recoveryTimeoutSeconds ??= 30
+  if (
+    !Number.isInteger(svc.recoveryTimeoutSeconds)
+    || svc.recoveryTimeoutSeconds < 1
+    || svc.recoveryTimeoutSeconds > 600
+  ) {
+    abort(`Service "${svc.id}" recoveryTimeoutSeconds must be an integer between 1 and 600`)
+  }
+
   const validPMs = ["auto", "bun", "npm", "yarn", "pnpm"]
   svc.packageManager ??= "auto"
   if (!validPMs.includes(svc.packageManager)) {

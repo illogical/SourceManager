@@ -150,7 +150,7 @@ components:
 
     LifecycleState:
       type: string
-      enum: [starting, running, stopping, stopped, failed]
+      enum: [starting, recovering, running, stopping, stopped, failed]
       example: running
 
     ServiceLifecycle:
@@ -276,6 +276,8 @@ components:
             - not_configured
             - unavailable
             - local_stopped
+            - local_recovering
+            - enabled_unverified
             - not_advertised
             - pending_approval
             - draining
@@ -326,6 +328,11 @@ components:
           type: string
           enum: [ping, full]
           example: ping
+        recoveryTimeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 600
+          default: 30
         packageManager:
           type: string
           enum: [auto, bun, npm, yarn, pnpm]

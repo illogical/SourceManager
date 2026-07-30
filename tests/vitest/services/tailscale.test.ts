@@ -122,7 +122,31 @@ describe("named Tailscale Service helpers", () => {
     }
 
     expect(checkTailscaleService(service, false, machine, config).status).toBe("local_stopped")
+    expect(checkTailscaleService(service, "recovering", machine, config).status).toBe("local_recovering")
     expect(checkTailscaleService(service, true, machine, config).status).toBe("mismatch")
+  })
+
+  it("reports saved enabled intent as unverified when live Serve state cannot be read", () => {
+    const result = checkTailscaleService(
+      service,
+      "running",
+      {
+        state: "connected",
+        backendState: "Running",
+        tailnetDomain: "example.ts.net",
+        tags: ["tag:dev-service-host"],
+        serviceHostCapability: {},
+        error: "Serve configuration unavailable",
+      },
+      { services: {} },
+      false,
+    )
+    expect(result).toMatchObject({
+      status: "enabled_unverified",
+      desiredEnabled: true,
+      canToggle: true,
+      lastError: null,
+    })
   })
 
   it("inspects advertisement and drains before local shutdown proceeds", async () => {
@@ -220,5 +244,30 @@ describe("named Tailscale Service helpers", () => {
     expect(result.status).toBe("connected")
     expect(result.lastError).toBeNull()
     clearTailscaleServiceMessages(serviceWithStaleError.id)
+  })
+
+  it("accepts NoState when an immediate reread confirms the advertisement", async () => {
+    let advertiseAttempted = false
+    const executor: TailscaleExecutor = {
+      async execute(args) {
+        if (args[1] === "advertise") {
+          advertiseAttempted = true
+          throw new Error("NoState")
+        }
+        return {
+          stdout: JSON.stringify({
+            services: {
+              "svc:devplanner-api": {
+                advertised: true,
+                endpoints: { "tcp:443": "http://127.0.0.1:17103" },
+              },
+            },
+          }),
+          stderr: "",
+        }
+      },
+    }
+    await expect(advertiseTailscaleService(service, executor)).resolves.toBeUndefined()
+    expect(advertiseAttempted).toBe(true)
   })
 })

@@ -30,6 +30,11 @@
   background: rgba(245, 158, 11, 0.13);
 }
 
+.recovering {
+  color: #ffd166;
+  background: rgba(245, 158, 11, 0.13);
+}
+
 .stopping {
   color: #f9a8d4;
   background: rgba(236, 72, 153, 0.13);

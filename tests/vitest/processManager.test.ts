@@ -303,6 +303,27 @@ describe("ProcessManager.init — stale state pruning", () => {
 })
 
 describe("ProcessManager startup reconciliation", () => {
+  it("bounds cold-start reconciliation concurrency to two services", async () => {
+    const pm = makePm()
+    let active = 0
+    let peak = 0
+    const internals = pm as unknown as {
+      reconcileService: (repo: RepoConfig, service: ServiceConfig) => Promise<void>
+    }
+    internals.reconcileService = vi.fn(async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      active -= 1
+    })
+    const services = Array.from({ length: 5 }, (_, index) =>
+      makeService({ id: `service-${index}`, port: 3000 + index }))
+
+    await pm.reconcileStartup([{ ...makeRepo(), services }])
+
+    expect(peak).toBe(2)
+  })
+
   it("makes one bounded recovery attempt for a previously running service", async () => {
     const pm = makePm()
     pm._healthPollIntervalMs = 1
@@ -324,7 +345,7 @@ describe("ProcessManager startup reconciliation", () => {
     })
   })
 
-  it("switches recovery intent off after the five-second timeout", async () => {
+  it("keeps a live slow service recovering after its readiness threshold", async () => {
     const pm = makePm()
     pm._healthPollIntervalMs = 1
     pm._startupReconciliationTimeoutMs = 20
@@ -336,13 +357,13 @@ describe("ProcessManager startup reconciliation", () => {
     await pm.reconcileStartup([{ ...makeRepo(), services: [makeService()] }])
 
     expect(pm._spawnProcess).toHaveBeenCalledOnce()
-    expect(pm._requestRunnerStop).toHaveBeenCalledOnce()
+    expect(pm._requestRunnerStop).not.toHaveBeenCalled()
     expect(pm.getProcess("test-service")).toMatchObject({
-      lifecycleState: "failed",
-      intendedState: "stopped",
-      diagnosticCode: "SERVICE_STARTUP_RECOVERY_FAILED",
+      lifecycleState: "recovering",
+      intendedState: "running",
       recoveryAttempt: 1,
     })
+    await pm.forget("test-service")
   })
 })
 

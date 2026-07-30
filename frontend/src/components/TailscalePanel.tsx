@@ -13,6 +13,8 @@ const LABELS: Record<TailscaleServiceCheck["status"], string> = {
   not_configured: "Not configured",
   unavailable: "Tailscale unavailable",
   local_stopped: "Service stopped",
+  local_recovering: "Waiting for service",
+  enabled_unverified: "Enabled (unverified)",
   not_advertised: "Not on Tailnet",
   pending_approval: "Pending approval",
   draining: "Draining",

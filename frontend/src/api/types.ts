@@ -1,6 +1,6 @@
 // ── Lifecycle ──────────────────────────────────────────────────────────────────
 
-export type LifecycleState = "starting" | "running" | "stopping" | "stopped" | "failed"
+export type LifecycleState = "starting" | "recovering" | "running" | "stopping" | "stopped" | "failed"
 
 export interface Lifecycle {
   state: LifecycleState
@@ -54,6 +54,8 @@ export type TailscaleServiceStatus =
   | "not_configured"
   | "unavailable"
   | "local_stopped"
+  | "local_recovering"
+  | "enabled_unverified"
   | "not_advertised"
   | "pending_approval"
   | "draining"
@@ -97,6 +99,7 @@ export interface ServiceSummary {
   port: number
   healthUrl: string
   healthMode: "ping" | "full"
+  recoveryTimeoutSeconds?: number
   packageManager: string
   scriptName: string
   tags: string[]
@@ -150,6 +153,7 @@ export interface EditableServiceConfig {
   port: number
   healthUrl: string
   healthMode: "ping" | "full"
+  recoveryTimeoutSeconds?: number
   tags: string[]
   allowedIps: string[]
   tailnetHostname?: string

@@ -46,7 +46,9 @@
 
 .badge[data-status="pending_approval"],
 .badge[data-status="not_advertised"],
-.badge[data-status="draining"] {
+.badge[data-status="draining"],
+.badge[data-status="local_recovering"],
+.badge[data-status="enabled_unverified"] {
   color: #fde68a;
   background: rgba(245, 158, 11, 0.13);
 }

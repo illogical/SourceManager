@@ -79,6 +79,7 @@ function toEditableConfig(config: ProjectsFileConfig): EditableConfig {
         port: svc.port,
         healthUrl: svc.healthUrl,
         healthMode: svc.healthMode ?? "ping",
+        recoveryTimeoutSeconds: svc.recoveryTimeoutSeconds ?? 30,
         tags: [...(svc.tags ?? [])],
         allowedIps: [...(svc.allowedIps ?? [])],
         tailnetHostname: svc.tailnetHostname,
@@ -178,6 +179,13 @@ export function validateEditableConfig(proposed: EditableConfig): ValidationResu
       }
       if (!svc.healthUrl?.trim() || !isValidUrl(svc.healthUrl)) {
         err(`${sp}.healthUrl`, "Must be a valid http:// or https:// URL")
+      }
+      if (
+        !Number.isInteger(svc.recoveryTimeoutSeconds ?? 30)
+        || (svc.recoveryTimeoutSeconds ?? 30) < 1
+        || (svc.recoveryTimeoutSeconds ?? 30) > 600
+      ) {
+        err(`${sp}.recoveryTimeoutSeconds`, "Recovery timeout must be an integer between 1 and 600 seconds")
       }
       if (!svc.scriptName?.trim()) {
         err(`${sp}.scriptName`, "Script name is required")
@@ -289,7 +297,7 @@ export function diffEditableConfig(current: EditableConfig, proposed: EditableCo
 
       const editableFields: (keyof EditableServiceConfig)[] = [
         "displayName", "packageManager", "scriptName", "installCommand",
-        "port", "healthUrl", "healthMode", "tags", "allowedIps",
+        "port", "healthUrl", "healthMode", "recoveryTimeoutSeconds", "tags", "allowedIps",
         "tailnetHostname", "tailnetDomain", "tailscaleServeEnabled",
         "tailscaleServeMode", "tailscaleServeTarget",
         "tailnetExposureMode", "tailscaleServiceName", "tailscaleServiceEnabled",
@@ -328,6 +336,7 @@ function mergeService(
     port: proposed.port,
     healthUrl: proposed.healthUrl,
     healthMode: proposed.healthMode,
+    recoveryTimeoutSeconds: proposed.recoveryTimeoutSeconds ?? 30,
     tags: proposed.tags,
     allowedIps: proposed.allowedIps,
     tailnetHostname: proposed.tailnetHostname || undefined,

@@ -18,6 +18,11 @@ import {
   tailscaleExecutor,
 } from "./services/tailscale"
 import { pruneServiceOutputLogs } from "./services/serviceOutput"
+import { getApplicationState } from "./services/applicationState"
+import {
+  configureApplicationLifecycle,
+  requestApplicationShutdown,
+} from "./services/applicationLifecycle"
 
 // ── Startup ────────────────────────────────────────────────────────────────
 
@@ -103,6 +108,15 @@ const app = new Elysia()
   // Authenticated routes — guard applied via onBeforeHandle scoped to /v1
   .group("/v1", (app) =>
     app
+      .onBeforeHandle(({ request, set }) => {
+        if (request.method !== "GET" && getApplicationState() === "shutting_down") {
+          set.status = 503
+          return {
+            error: "SourceManager is shutting down",
+            code: "SOURCE_MANAGER_SHUTTING_DOWN",
+          }
+        }
+      })
       .onBeforeHandle(({ headers, set }) => {
         if (!validateToken(headers as Record<string, string | undefined>)) {
           set.status = 401
@@ -132,6 +146,16 @@ const app = new Elysia()
 
   .listen(config.server.port)
 
+if (!app.server) throw new Error("SourceManager HTTP server did not start")
+configureApplicationLifecycle(app.server)
+
+process.on("SIGINT", () => {
+  void requestApplicationShutdown("Ctrl+C")
+})
+process.on("SIGTERM", () => {
+  void requestApplicationShutdown("SIGTERM")
+})
+
 console.log(`
 ╔══════════════════════════════════════════════════╗
 ║          SourceManager API — Running             ║
@@ -151,6 +175,12 @@ const managedRepos = config.repos.map((repo) => ({
   ...repo,
   services: repo.services.filter((service) => service.port !== config.server.port),
 }))
+processManager._onReady = async (service) => {
+  const named = getNamedServiceConfig(service)
+  if (named?.desiredEnabled) {
+    await restoreTailscaleWhenReady(service, async () => true, tailscaleExecutor, 1, 0)
+  }
+}
 void processManager.reconcileStartup(managedRepos, {
   onHealthyDesiredTailnet: async (service) => {
     const named = getNamedServiceConfig(service)

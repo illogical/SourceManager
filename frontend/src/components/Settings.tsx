@@ -97,6 +97,13 @@ function validateDraft(draft: EditableConfig, newIds: Set<string>): Record<strin
       if (!svc.healthUrl.trim() || !isValidUrl(svc.healthUrl)) {
         errors[`${sp}.healthUrl`] = "Valid http:// or https:// URL required"
       }
+      if (
+        !Number.isInteger(svc.recoveryTimeoutSeconds ?? 30)
+        || (svc.recoveryTimeoutSeconds ?? 30) < 1
+        || (svc.recoveryTimeoutSeconds ?? 30) > 600
+      ) {
+        errors[`${sp}.recoveryTimeoutSeconds`] = "Integer 1–600"
+      }
       if (!svc.scriptName.trim()) {
         errors[`${sp}.scriptName`] = "Required"
       } else if (!SCRIPT_RE.test(svc.scriptName)) {
@@ -401,6 +408,7 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
             port: 3000,
             healthUrl: "http://localhost:3000/health",
             healthMode: "ping" as const,
+            recoveryTimeoutSeconds: 30,
             tags: [],
             allowedIps: [],
           },
@@ -845,6 +853,23 @@ export default function Settings({ onConnected, onClose, onSaved, onSaveError }:
                                   <option value="ping">ping (2xx)</option>
                                   <option value="full">full (JSON ok)</option>
                                 </select>
+                              </Field>
+                              <Field
+                                label="Recovery Timeout"
+                                path={`${sp}.recoveryTimeoutSeconds`}
+                                error={fieldErrors[`${sp}.recoveryTimeoutSeconds`]}
+                                hint="Seconds before showing prolonged recovery"
+                              >
+                                <input
+                                  className={inputClass(fieldErrors[`${sp}.recoveryTimeoutSeconds`])}
+                                  type="number"
+                                  min={1}
+                                  max={600}
+                                  value={svc.recoveryTimeoutSeconds ?? 30}
+                                  onChange={(e) =>
+                                    setServiceField(i, j, "recoveryTimeoutSeconds", parseInt(e.target.value) || 0)
+                                  }
+                                />
                               </Field>
                             </div>
                             <Field

@@ -112,8 +112,13 @@ export function startService(repoId: string, serviceId: string): Promise<unknown
   return apiFetch(`/v1/repos/${repoId}/services/${serviceId}/start`, { method: "POST" })
 }
 
-export function stopService(repoId: string, serviceId: string): Promise<unknown> {
-  return apiFetch(`/v1/repos/${repoId}/services/${serviceId}/stop`, { method: "POST" })
+export interface StopServiceResponse {
+  success: boolean
+  shutdownAccepted?: boolean
+}
+
+export function stopService(repoId: string, serviceId: string): Promise<StopServiceResponse> {
+  return apiFetch<StopServiceResponse>(`/v1/repos/${repoId}/services/${serviceId}/stop`, { method: "POST" })
 }
 
 export function getTailscaleStatus(): Promise<TailscaleStatusResponse> {

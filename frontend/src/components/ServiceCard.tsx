@@ -33,7 +33,7 @@ export default function ServiceCard({
   const { lifecycle, tailnet } = service
   const state = lifecycle.state
   const isPending = pendingAction !== null
-  const isRunning = state === "running" || state === "starting"
+  const isRunning = state === "running" || state === "starting" || state === "recovering"
   const isStopping = state === "stopping"
 
   async function run(name: string, fn: () => Promise<void>) {
@@ -52,7 +52,9 @@ export default function ServiceCard({
     lifecycle.state === "running" && lifecycle.uptimeMs != null
       ? formatUptime(lifecycle.uptimeMs)
       : null
-  const toggleLabel = isRunning || isStopping ? "Stop service" : "Start service"
+  const toggleLabel = state === "recovering"
+    ? "Stop recovering service"
+    : isRunning || isStopping ? "Stop service" : "Start service"
   const toggleIcon = isRunning || isStopping ? Square : Play
   const toggleVariant = isRunning || isStopping ? "stop" : "start"
   const canRestart = state === "running"
@@ -67,7 +69,9 @@ export default function ServiceCard({
       : null,
     localTarget: tailnet.serviceTarget ?? tailnet.serveTarget,
     httpsPort: tailnet.servicePort ?? 443,
-    status: state === "running" ? "not_advertised" : "local_stopped",
+    status: state === "recovering"
+      ? "local_recovering"
+      : state === "running" ? "not_advertised" : "local_stopped",
     lastError: null,
     lastWarning: null,
     operation: null,
@@ -159,9 +163,9 @@ export default function ServiceCard({
           {actionError ?? lifecycle.lastError}
         </div>
       ) : null}
-      {state === "starting" && lifecycle.recoveryReason ? (
+      {(state === "starting" || state === "recovering") && lifecycle.recoveryReason ? (
         <div className={styles.message} role="status">
-          {lifecycle.recoveryReason} (attempt {lifecycle.recoveryAttempt ?? 1} of 1)
+          {lifecycle.recoveryReason}
         </div>
       ) : null}
     </article>

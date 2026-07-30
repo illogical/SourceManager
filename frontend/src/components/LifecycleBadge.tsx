@@ -8,6 +8,7 @@ interface Props {
 const STATE_CONFIG: Record<LifecycleState, { label: string; cssClass: string }> = {
   running: { label: "running", cssClass: styles.running },
   starting: { label: "starting", cssClass: styles.starting },
+  recovering: { label: "recovering", cssClass: styles.recovering },
   stopping: { label: "stopping", cssClass: styles.stopping },
   stopped: { label: "stopped", cssClass: styles.stopped },
   failed: { label: "failed", cssClass: styles.failed },

@@ -185,6 +185,17 @@ export async function pruneServiceOutputLogs(
   }
 }
 
+export async function readRecentServiceOutput(logDirectory: string, maxBytes = 4_096): Promise<string> {
+  const segments = await listSegments(logDirectory)
+  if (segments.length === 0) return ""
+  try {
+    const buffer = await readFile(segmentPath(logDirectory, segments.at(-1)!))
+    return buffer.subarray(Math.max(0, buffer.length - maxBytes)).toString("utf8").trim()
+  } catch {
+    return ""
+  }
+}
+
 async function directoryInfo(directory: string): Promise<{ bytes: number; modifiedAt: number }> {
   const entries = await readdir(directory)
   let bytes = 0

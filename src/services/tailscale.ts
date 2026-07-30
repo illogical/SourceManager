@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs"
-import type { ServiceConfig } from "../types"
+import type { LifecycleState, ServiceConfig } from "../types"
 
 export type TailscaleOperation = "enabling" | "draining" | "disabling"
 export type TailscaleServiceState =
   | "not_configured"
   | "unavailable"
   | "local_stopped"
+  | "local_recovering"
+  | "enabled_unverified"
   | "not_advertised"
   | "pending_approval"
   | "draining"
@@ -202,9 +204,10 @@ export async function readServeConfig(executor: TailscaleExecutor): Promise<Serv
 
 export function checkTailscaleService(
   service: ServiceConfig,
-  localRunning: boolean,
+  localState: boolean | LifecycleState,
   machine: TailscaleMachineStatus,
   serveConfig: ServeConfig,
+  serveConfigAvailable = true,
 ): TailscaleServiceCheck {
   const named = getNamedServiceConfig(service)
   const operation = operationByService.get(service.id) ?? null
@@ -234,9 +237,15 @@ export function checkTailscaleService(
   const targetMatches = endpointTarget ? normalizeTarget(endpointTarget) === named.target : false
   let status: TailscaleServiceState
 
+  const localRunning = localState === true || localState === "running"
+  const localRecovering = localState === "recovering" || localState === "starting"
+
   if (operation === "draining") status = "draining"
+  else if (localRecovering) status = "local_recovering"
   else if (!localRunning) status = "local_stopped"
+  else if ((!serveConfigAvailable || machine.state === "unavailable") && named.desiredEnabled) status = "enabled_unverified"
   else if (machine.state === "unavailable") status = "unavailable"
+  else if (!serveConfigAvailable) status = "unavailable"
   else if (!configured || !endpointTarget) status = "not_advertised"
   else if (!targetMatches) status = "mismatch"
   else if (configured.advertised === false) status = "not_advertised"
@@ -247,7 +256,10 @@ export function checkTailscaleService(
   const observedWarning = status === "connected" && !named.desiredEnabled
     ? "Tailnet is advertised but the saved desired state is off; turn it on to preserve exposure across restarts"
     : lastWarning
-  const observedError = status === "connected" ? null : lastError
+  const observedError = status === "connected" || status === "enabled_unverified" ? null : lastError
+  const presentationWarning = status === "enabled_unverified"
+    ? "Saved Tailnet intent is enabled, but live Serve state could not be verified"
+    : observedWarning
 
   return {
     serviceId: service.id,
@@ -259,7 +271,7 @@ export function checkTailscaleService(
     httpsPort: named.httpsPort,
     status,
     lastError: observedError,
-    lastWarning: observedWarning,
+    lastWarning: presentationWarning,
     operation,
     canToggle: localRunning && machine.state !== "unavailable" && operation === null,
   }
@@ -286,7 +298,15 @@ export async function enableTailscaleService(service: ServiceConfig, executor: T
 export async function advertiseTailscaleService(service: ServiceConfig, executor: TailscaleExecutor): Promise<void> {
   const named = requireNamedConfig(service)
   await withOperation(service.id, "enabling", async () => {
-    await executor.execute(["serve", "advertise", serviceNameToCliName(named.serviceName)])
+    try {
+      await executor.execute(["serve", "advertise", serviceNameToCliName(named.serviceName)])
+    } catch (error) {
+      if (!/NoState/i.test(safeError(error))) throw error
+      const config = await readServeConfig(executor)
+      const current = config.services?.[serviceNameToCliName(named.serviceName)]
+      const target = current?.endpoints?.[`tcp:${named.httpsPort}`]
+      if (!target || normalizeTarget(target) !== named.target || current?.advertised !== true) throw error
+    }
   })
 }
 
@@ -383,7 +403,21 @@ export async function restoreTailscaleWhenReady(
         }
         clearTailscaleServiceMessages(service.id)
       } catch (err) {
-        errorByService.set(service.id, safeError(err))
+        const detail = safeError(err)
+        if (/NoState/i.test(detail)) {
+          try {
+            const observed = await readServeConfig(executor)
+            const current = observed.services?.[serviceNameToCliName(named.serviceName)]
+            const target = current?.endpoints?.[`tcp:${named.httpsPort}`]
+            if (target && normalizeTarget(target) === named.target && current.advertised === true) {
+              clearTailscaleServiceMessages(service.id)
+              return
+            }
+          } catch {
+            // Preserve the original command error when live state also fails.
+          }
+        }
+        errorByService.set(service.id, detail)
       }
       return
     }

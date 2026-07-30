@@ -49,3 +49,7 @@ export async function logRequest(entry: RequestLogEntry): Promise<void> {
   appendQueue = write.catch(() => {})
   await write
 }
+
+export async function flushRequestLogs(): Promise<void> {
+  await appendQueue
+}

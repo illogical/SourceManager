@@ -15,12 +15,16 @@ import {
   TailscaleUnavailableError,
   type TailscaleExecutor,
 } from "../services/tailscale"
-import type { ServiceConfig } from "../types"
+import type { LifecycleState, ServiceConfig } from "../types"
+
+async function localServiceState(service: ServiceConfig): Promise<LifecycleState> {
+  const process = await processManager.observe(service)
+  if (process) return process.lifecycleState
+  return (await checkHealth(service)).status === "pass" ? "running" : "stopped"
+}
 
 async function isLocalServiceRunning(service: ServiceConfig): Promise<boolean> {
-  const process = await processManager.observe(service)
-  if (process) return process.lifecycleState === "running"
-  return (await checkHealth(service)).status === "pass"
+  return await localServiceState(service) === "running"
 }
 
 export function createTailscaleRoute(executor: TailscaleExecutor = tailscaleExecutor) {
@@ -30,17 +34,18 @@ export function createTailscaleRoute(executor: TailscaleExecutor = tailscaleExec
       async () => {
         const machine = await readMachineStatus(executor)
         let serveConfig: Awaited<ReturnType<typeof readServeConfig>> = { services: {} }
+        let serveConfigAvailable = machine.state !== "unavailable"
         if (machine.state !== "unavailable") {
           try {
             serveConfig = await readServeConfig(executor)
           } catch (err) {
-            machine.state = "unavailable"
             machine.error = err instanceof Error ? err.message : String(err)
+            serveConfigAvailable = false
           }
         }
 
         const configured = getAllServices()
-        const running = await Promise.all(configured.map(({ service }) => isLocalServiceRunning(service)))
+        const localStates = await Promise.all(configured.map(({ service }) => localServiceState(service)))
         return {
           machine: {
             state: machine.state,
@@ -50,7 +55,7 @@ export function createTailscaleRoute(executor: TailscaleExecutor = tailscaleExec
             error: machine.error,
           },
           services: configured.map(({ service }, index) =>
-            checkTailscaleService(service, running[index], machine, serveConfig)
+            checkTailscaleService(service, localStates[index], machine, serveConfig, serveConfigAvailable)
           ),
         }
       },

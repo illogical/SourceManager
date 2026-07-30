@@ -63,7 +63,7 @@ describe("RepoList", () => {
     expect(screen.getAllByText("1").length).toBeGreaterThan(0)
   })
 
-  it("shows startup recovery progress and remaining timeout", async () => {
+  it("shows startup recovery progress and continued background recovery", async () => {
     vi.spyOn(client, "listRepos").mockResolvedValue({ repos: [makeRepo("recovering")] })
     vi.spyOn(client, "getHealth").mockResolvedValue({
       status: "ok",
@@ -86,7 +86,7 @@ describe("RepoList", () => {
 
     expect(screen.getByText(/Restoring services/)).toBeInTheDocument()
     expect(screen.getByText(/1 of 2 checked/)).toBeInTheDocument()
-    expect(screen.getByText(/4s remaining/)).toBeInTheDocument()
+    expect(screen.getByText(/remain Recovering/)).toBeInTheDocument()
   })
 
   it("hides zero-value project status counts", async () => {

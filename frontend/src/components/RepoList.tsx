@@ -10,6 +10,7 @@ const GROUP_ACCENTS = ["#2dd4bf", "#60a5fa", "#a78bfa", "#f59e0b", "#fb7185", "#
 const STATE_LABELS: Record<LifecycleState, string> = {
   running: "Running",
   starting: "Starting",
+  recovering: "Recovering",
   stopping: "Stopping",
   stopped: "Stopped",
   failed: "Failed",
@@ -86,7 +87,11 @@ export default function RepoList() {
   }
 
   async function handleStop(repoId: string, serviceId: string) {
-    await client.stopService(repoId, serviceId)
+    const result = await client.stopService(repoId, serviceId)
+    if (result.shutdownAccepted) {
+      setApplicationState("shutting_down")
+      return
+    }
     try {
       const health = await client.getHealth()
       setApplicationState(health.applicationState)
@@ -156,9 +161,8 @@ export default function RepoList() {
           <div>
             <strong>Restoring services from the previous SourceManager session</strong>
             <span>
-              {startup.completed} of {startup.total} checked. Up to{" "}
-              {Math.max(0, Math.ceil(startup.remainingMs / 1000))}s remaining.
-              Services that do not recover will switch Off.
+              {startup.completed} of {startup.total} checked. Services that need
+              longer remain Recovering and continue checking in the background.
             </span>
           </div>
           <progress value={startup.completed} max={Math.max(1, startup.total)} />
@@ -182,7 +186,7 @@ export default function RepoList() {
           </div>
           <div className={styles.metric} data-state="attention">
             <ShieldAlert aria-hidden="true" size={18} strokeWidth={2.2} />
-            <span className={styles.metricValue}>{summary.failed + summary.starting + summary.stopping}</span>
+            <span className={styles.metricValue}>{summary.failed + summary.starting + summary.recovering + summary.stopping}</span>
             <span className={styles.metricLabel}>Attention</span>
           </div>
           <button
@@ -263,7 +267,7 @@ function getSummary(repos: RepoSummary[]) {
       }
       return acc
     },
-    { total: 0, running: 0, starting: 0, stopping: 0, stopped: 0, failed: 0 },
+    { total: 0, running: 0, starting: 0, recovering: 0, stopping: 0, stopped: 0, failed: 0 },
   )
   return counts
 }
@@ -274,6 +278,6 @@ function countStates(repo: RepoSummary): Record<LifecycleState, number> {
       acc[service.lifecycle.state] += 1
       return acc
     },
-    { running: 0, starting: 0, stopping: 0, stopped: 0, failed: 0 },
+    { running: 0, starting: 0, recovering: 0, stopping: 0, stopped: 0, failed: 0 },
   )
 }

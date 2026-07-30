@@ -197,6 +197,16 @@ describe("validateConfig", () => {
       expect(cfg.repos[0].services[0].healthMode).toBe("ping")
     })
 
+    it("defaults recoveryTimeoutSeconds to 30 and validates its range", () => {
+      const cfg = validConfig()
+      delete cfg.repos[0].services[0].recoveryTimeoutSeconds
+      validateConfig(cfg)
+      expect(cfg.repos[0].services[0].recoveryTimeoutSeconds).toBe(30)
+
+      cfg.repos[0].services[0].recoveryTimeoutSeconds = 0
+      expect(() => validateConfig(cfg)).toThrow(/recoveryTimeoutSeconds/)
+    })
+
     it("sets service.packageManager to auto when omitted", () => {
       const cfg = validConfig()
       // @ts-expect-error testing undefined case

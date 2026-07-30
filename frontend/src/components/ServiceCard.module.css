@@ -25,6 +25,10 @@
   --state-color: #fbbf24;
 }
 
+.card[data-state="recovering"] {
+  --state-color: #fbbf24;
+}
+
 .card[data-state="stopping"] {
   --state-color: #f472b6;
 }

@@ -7,7 +7,7 @@
     "dev": "bun run src/devLauncher.ts",
     "dev:backend": "bun run --watch src/index.ts",
     "dev:frontend": "bunx vite --config frontend/vite.config.ts",
-    "start": "bun run src/index.ts",
+    "start": "bun run src/start.ts",
     "frontend:build": "bunx vite build --config frontend/vite.config.ts",
     "test": "bun test tests/config.test.ts tests/middleware tests/services && bun test tests/routes",
     "test:watch": "bun test tests/config.test.ts tests/middleware tests/services --watch",
@@ -32,7 +32,6 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "bun-types": "latest",
-    "concurrently": "10.0.4",
     "jsdom": "^29.1.1",
     "vite": "^8.0.11",
     "vitest": "^4.1.5"

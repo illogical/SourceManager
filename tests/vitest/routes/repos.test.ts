@@ -62,6 +62,10 @@ vi.mock("../../../src/services/runLogger", () => ({
   readRecentLogs: vi.fn(async () => []),
 }))
 
+vi.mock("../../../src/services/applicationLifecycle", () => ({
+  scheduleApplicationShutdown: vi.fn(),
+}))
+
 beforeEach(async () => {
   vi.restoreAllMocks()
   const config = await import("../../../src/config")
@@ -268,6 +272,23 @@ describe("POST /v1/repos/:repoId/services/:serviceId/stop", () => {
     expect(body.success).toBe(true)
     expect(body.lifecycle.state).toBe("stopped")
     expect(processManager.stop).toHaveBeenCalledWith(testService, testRepoWithService)
+  })
+
+  it("accepts SourceManager self-stop and schedules application shutdown", async () => {
+    const config = await import("../../../src/config")
+    const lifecycle = await import("../../../src/services/applicationLifecycle")
+    const selfService = { ...testService, port: 17106 }
+    vi.spyOn(config, "requireService").mockReturnValue({ repo: testRepoWithService, service: selfService })
+
+    const app = await buildApp()
+    const res = await app.handle(req("/repos/my-repo/services/my-repo-web/stop", { method: "POST" }))
+    expect(res.status).toBe(202)
+    expect(await res.json()).toMatchObject({
+      success: true,
+      shutdownAccepted: true,
+      application: { state: "shutting_down", phase: "accepted" },
+    })
+    expect(lifecycle.scheduleApplicationShutdown).toHaveBeenCalledWith("dashboard Stop")
   })
 
   it("returns 500 with diagnostics when stop fails", async () => {

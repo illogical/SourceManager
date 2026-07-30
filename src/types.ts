@@ -26,6 +26,7 @@ export interface ServiceConfig {
   port: number
   healthUrl: string
   healthMode: "ping" | "full"
+  recoveryTimeoutSeconds?: number
   tags: string[]
   installCommand?: string | null
   allowedIps: string[]
@@ -75,7 +76,7 @@ export interface RuntimeConfigSummary {
 
 // ── Lifecycle state machine ───────────────────────────────────────────────────
 
-export type LifecycleState = "starting" | "running" | "stopping" | "stopped" | "failed"
+export type LifecycleState = "starting" | "recovering" | "running" | "stopping" | "stopped" | "failed"
 
 export interface ServiceProcessState {
   serviceId: string
@@ -226,6 +227,7 @@ export interface EditableServiceConfig {
   port: number
   healthUrl: string
   healthMode: "ping" | "full"
+  recoveryTimeoutSeconds?: number
   tags: string[]
   allowedIps: string[]
   tailnetHostname?: string

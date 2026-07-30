@@ -182,23 +182,25 @@ All fields optional. Defaults: branch from repo config, `installMode=auto`, `res
 
 ## Lifecycle states
 
-Services transition through: `starting` → `running` | `failed`, `running` → `stopping` → `stopped` | `failed`, or `stopped`.
+Services transition through: `starting` or `recovering` → `running` | `failed`,
+`running` → `stopping` → `stopped` | `failed`, or `stopped`.
 
 | State | Description |
 |-------|-------------|
 | `starting` | Process spawned; health poll in progress (up to 30s) |
+| `recovering` | Verified process is alive but health has not passed; background checks continue |
 | `running` | Health check passed; process is live |
 | `stopping` | Stop requested; tracked PID and configured port listener are being terminated and verified |
 | `stopped` | Not running (never started or cleanly stopped) |
-| `failed` | Process exited before becoming ready, or health poll timed out |
+| `failed` | Process exited, lost verified identity, conflicted with another owner, or encountered a definitive launch error |
 
 State, intended state, and versioned runner launch identity are persisted to
 `data/state.json` after every change. On API restart, SourceManager verifies the
 runner heartbeat, run identity, command fingerprint, listener ownership, and
-health. A previously running unavailable service receives one five-second
-automatic recovery attempt. The dashboard displays reconciliation progress and
-remaining time; a timeout is marked `SERVICE_STARTUP_RECOVERY_FAILED` and the
-local service control returns Off.
+health. Previously running unavailable services are restored through a
+two-worker queue with an independent readiness threshold per service (30 seconds
+by default). A verified live process remains `recovering` after the threshold,
+keeps intended state Running, and continues background health checks.
 
 ## Safe update state machine
 
@@ -227,10 +229,10 @@ Each step emits `{ step, status: "pending"|"success"|"failure"|"skipped", messag
   under `data/runtime/services/`; tokens are never returned by the API.
 - Combined stdout/stderr is durably rotated under `data/logs/services/` and can
   be read historically or streamed read-only with SSE.
-- The development launcher handles Ctrl+C and SIGTERM with a bounded shutdown
-  of only the SourceManager API and Vite PIDs. It never uses Windows
-  `taskkill /T`, so detached managed runners and their Tailnet advertisements
-  remain running.
+- The development launcher handles Ctrl+C and SIGTERM with a bounded selective
+  shutdown. It verifies and protects persistent runner subtrees, terminates
+  other SourceManager descendants deepest-first using exact PIDs, and never
+  uses Windows `taskkill /T` against the SourceManager root.
 - Process state is written with atomic replacement so abrupt launcher or machine
   shutdown cannot leave a partially written `data/state.json`.
 

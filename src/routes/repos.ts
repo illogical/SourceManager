@@ -10,6 +10,8 @@ import {
   tailscaleExecutor,
 } from "../services/tailscale"
 import type { LifecycleState, ServiceConfig } from "../types"
+import { scheduleApplicationShutdown } from "../services/applicationLifecycle"
+import { getApplicationState } from "../services/applicationState"
 
 interface ServiceLifecycle {
   state: LifecycleState
@@ -27,8 +29,9 @@ interface ServiceLifecycle {
 
 async function buildLifecycle(service: ServiceConfig): Promise<ServiceLifecycle> {
   if (service.port === getConfig().server.port) {
+    const shuttingDown = getApplicationState() === "shutting_down"
     return {
-      state: "running",
+      state: shuttingDown ? "stopping" : "running",
       pid: process.pid,
       startedAt: null,
       readySince: null,
@@ -87,6 +90,7 @@ function buildServiceSummary(service: ServiceConfig, lifecycle: ServiceLifecycle
     port: service.port,
     healthUrl: service.healthUrl,
     healthMode: service.healthMode,
+    recoveryTimeoutSeconds: service.recoveryTimeoutSeconds ?? 30,
     tags: service.tags,
     allowedIps: service.allowedIps,
     lifecycle,
@@ -285,13 +289,19 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
       const repo = requireRepo(params.repoId)
       const { service } = requireService(params.serviceId)
       if (service.port === getConfig().server.port) {
-        set.status = 409
+        set.status = 202
+        scheduleApplicationShutdown("dashboard Stop")
         return {
           serviceId: service.id,
           repoId: repo.id,
-          success: false,
+          success: true,
           alreadyStopped: false,
-          message: "Stop SourceManager with Ctrl+C or the Windows task launcher",
+          shutdownAccepted: true,
+          message: "SourceManager is shutting down",
+          application: {
+            state: "shutting_down",
+            phase: "accepted",
+          },
           diagnostics: null,
           tailnetPreparation: { success: true, warning: null },
           lifecycle: await buildLifecycle(service),

@@ -1,6 +1,6 @@
 import type { StartupReconciliationStatus } from "../types"
 
-const DEFAULT_TIMEOUT_MS = 5_000
+const DEFAULT_TIMEOUT_MS = 30_000
 
 let status: StartupReconciliationStatus = {
   state: "pending",
@@ -23,7 +23,7 @@ export function beginStartupReconciliation(total: number, timeoutMs = DEFAULT_TI
     total,
     completed: 0,
     remainingMs: timeoutMs,
-    message: total === 0 ? "No services require reconciliation" : "Checking saved services and Tailnet state",
+    message: total === 0 ? "No services require reconciliation" : "Checking saved services and starting recovery queue",
   }
 }
 

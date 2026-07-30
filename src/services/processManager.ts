@@ -20,6 +20,7 @@ import {
   markStartupServiceComplete,
   STARTUP_RECONCILIATION_TIMEOUT_MS,
 } from "./startupStatus"
+import { readRecentServiceOutput } from "./serviceOutput"
 
 const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
 const STATE_PATH = join(_dir, "..", "..", "data", "state.json")
@@ -28,6 +29,8 @@ const LOG_PATH = join(_dir, "..", "..", "data", "logs", "services")
 const RUNNER_PATH = join(_dir, "..", "serviceRunner.ts")
 const HEALTH_POLL_INTERVAL_MS = 1_000
 const HEALTH_POLL_TIMEOUT_MS = 30_000
+const RECOVERY_HEALTH_POLL_INTERVAL_MS = 2_000
+const STARTUP_RECOVERY_CONCURRENCY = 2
 const STOP_POLL_INTERVAL_MS = 250
 const STOP_POLL_TIMEOUT_MS = 5_000
 
@@ -126,6 +129,7 @@ export class ProcessManager {
   }
   _logLifecycleRun: typeof logLifecycleRun = logLifecycleRun
   _onUnexpectedExit: (serviceId: string) => void | Promise<void> = () => {}
+  _onReady: (service: ServiceConfig) => void | Promise<void> = () => {}
   _verifyLaunchRecord: (
     state: ServiceProcessState,
     service: ServiceConfig,
@@ -241,6 +245,26 @@ export class ProcessManager {
   async start(repo: RepoConfig, service: ServiceConfig, options: StartOptions = {}): Promise<StartResult> {
     // Idempotent for already-starting or running services
     const existing = this.processes.get(service.id)
+    if (existing?.lifecycleState === "recovering") {
+      const health = await this._checkHealth(service)
+      const verified = await this._verifyRunnerIdentity(existing, service)
+      if (health.status === "pass" && verified) {
+        await this.setRunning(service.id)
+        await this._onReady(service)
+        return {
+          success: true,
+          message: `Service "${service.id}" recovered and is now ready`,
+          lifecycleState: "running",
+          pid: existing.pid,
+        }
+      }
+      return {
+        success: true,
+        message: `Service "${service.id}" is still recovering; readiness was checked again`,
+        lifecycleState: "recovering",
+        pid: existing.pid,
+      }
+    }
     if (existing?.lifecycleState === "starting" || existing?.lifecycleState === "running" || existing?.lifecycleState === "stopping") {
       return {
         success: true,
@@ -393,7 +417,7 @@ export class ProcessManager {
       port: service.port,
       startedAt: createdAt,
       command: command.join(" "),
-      lifecycleState: "starting",
+      lifecycleState: options.recovery ? "recovering" : "starting",
       intendedState: "running",
       runId,
       processCreatedAt: createdAt,
@@ -416,7 +440,7 @@ export class ProcessManager {
     // Monitor for immediate exit
     proc.exited.then(async (code) => {
       const current = this.processes.get(service.id)
-      if (current?.pid === proc.pid && current.lifecycleState === "starting") {
+      if (current?.pid === proc.pid && (current.lifecycleState === "starting" || current.lifecycleState === "recovering")) {
         await this.setFailed(service.id, `Process exited with code ${code} before becoming ready`)
       } else if (current?.pid === proc.pid && current.lifecycleState === "running") {
         console.error(`[ProcessManager] "${service.id}" (PID ${proc.pid}) exited unexpectedly with code ${code}`)
@@ -432,13 +456,13 @@ export class ProcessManager {
       service.id,
       service,
       proc.pid,
-      options.readinessTimeoutMs ?? HEALTH_POLL_TIMEOUT_MS,
+      options.readinessTimeoutMs ?? (service.recoveryTimeoutSeconds ?? 30) * 1_000,
     ).catch(() => {})
 
     return {
       success: true,
       message: `Service "${service.id}" starting with PID ${proc.pid} on port ${service.port}`,
-      lifecycleState: "starting",
+      lifecycleState: options.recovery ? "recovering" : "starting",
       pid: proc.pid,
       portKillResult,
     }
@@ -603,20 +627,27 @@ export class ProcessManager {
     const configured = repos.flatMap((repo) => repo.services.map((service) => ({ repo, service })))
     beginStartupReconciliation(configured.length, this._startupReconciliationTimeoutMs)
 
-    await Promise.all(configured.map(async ({ repo, service }) => {
-      try {
-        await this.reconcileService(repo, service)
-        if (this.processes.get(service.id)?.lifecycleState === "running") {
-          await hooks.onHealthyDesiredTailnet?.(service)
-        } else {
-          await hooks.onUnhealthyTailnet?.(service)
+    let nextIndex = 0
+    const worker = async () => {
+      while (nextIndex < configured.length) {
+        const { repo, service } = configured[nextIndex++]
+        try {
+          await this.reconcileService(repo, service)
+          if (this.processes.get(service.id)?.lifecycleState === "running") {
+            await hooks.onHealthyDesiredTailnet?.(service)
+          } else {
+            await hooks.onUnhealthyTailnet?.(service)
+          }
+        } catch (err) {
+          console.warn(`[ProcessManager] Startup reconciliation failed for "${service.id}": ${(err as Error).message}`)
+        } finally {
+          markStartupServiceComplete()
         }
-      } catch (err) {
-        console.warn(`[ProcessManager] Startup reconciliation failed for "${service.id}": ${(err as Error).message}`)
-      } finally {
-        markStartupServiceComplete()
       }
-    }))
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(STARTUP_RECOVERY_CONCURRENCY, configured.length) }, () => worker()),
+    )
 
     completeStartupReconciliation()
   }
@@ -674,8 +705,8 @@ export class ProcessManager {
     }
 
     // The old runner is gone (the common reboot case). Remove only the stale
-    // record, then make one replacement attempt within the shared five-second
-    // startup window.
+    // record, then make one replacement attempt with this service's own
+    // readiness threshold.
     if (saved && runnerIdentity) {
       const stopped = await this.stopVerifiedRunnerForReplacement(saved, service)
       if (!stopped.success) {
@@ -686,10 +717,9 @@ export class ProcessManager {
     this.processes.delete(service.id)
     this.portMap.delete(service.port)
     await this.saveState()
-    const recoveryTimeoutMs = Math.max(
-      Math.min(250, this._startupReconciliationTimeoutMs),
-      this._startupReconciliationTimeoutMs - health.durationMs,
-    )
+    const recoveryTimeoutMs = service.recoveryTimeoutSeconds === undefined
+      ? this._startupReconciliationTimeoutMs
+      : service.recoveryTimeoutSeconds * 1_000
     const result = await this.start(repo, service, {
       recovery: true,
       readinessTimeoutMs: recoveryTimeoutMs,
@@ -706,23 +736,14 @@ export class ProcessManager {
       if (current?.lifecycleState === "failed") break
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
-    if (this.processes.get(service.id)?.lifecycleState !== "running") {
-      await this.recordRecoveryFailure(
-        repo,
-        service,
-        `Service did not become healthy within the ${this._startupReconciliationTimeoutMs / 1000}s startup window`,
-      )
-    }
+    // A live runner remains Recovering after its initial readiness threshold.
+    // pollUntilReady continues checking it in the background.
   }
 
   private async recordRecoveryFailure(repo: RepoConfig, service: ServiceConfig, detail: string): Promise<void> {
     const current = this.processes.get(service.id)
-    if (current?.runId && current.manifestPath && this._isProcessAlive(current.pid)) {
-      const stop = await this._requestRunnerStop(current)
-      if (!stop.success) {
-        detail = `${detail}; recovery runner cleanup failed: ${stop.error ?? "unknown error"}`
-      }
-    }
+    const output = current?.logDirectory ? await readRecentServiceOutput(current.logDirectory, 4_096) : ""
+    if (output) detail = `${detail}. Recent output: ${output}`
     this.processes.set(service.id, {
       ...(current ?? {
         serviceId: service.id,
@@ -733,11 +754,11 @@ export class ProcessManager {
         command: `${service.packageManager} run ${service.scriptName}`,
       }),
       lifecycleState: "failed",
-      intendedState: "stopped",
+      intendedState: "running",
       recoveryAttempt: 1,
       recoveryReason: "Restoring service that was running before SourceManager exited",
       diagnosticCode: "SERVICE_STARTUP_RECOVERY_FAILED",
-      lastError: `Startup recovery failed: ${detail}. Automatic recovery is Off until the next explicit Start.`,
+      lastError: `Startup recovery failed: ${detail}`,
     })
     this.portMap.delete(service.port)
     await this.saveState()
@@ -883,7 +904,11 @@ export class ProcessManager {
       await new Promise((resolve) => setTimeout(resolve, Math.min(this._healthPollIntervalMs, timeoutMs)))
 
       const current = this.processes.get(serviceId)
-      if (!current || current.pid !== expectedPid || current.lifecycleState !== "starting") return
+      if (
+        !current
+        || current.pid !== expectedPid
+        || (current.lifecycleState !== "starting" && current.lifecycleState !== "recovering")
+      ) return
 
       if (!this._isProcessAlive(current.pid)) {
         await this.setFailed(serviceId, "Process exited before becoming ready")
@@ -894,13 +919,46 @@ export class ProcessManager {
       if (health.status === "pass") {
         await this.setRunning(serviceId)
         console.log(`[ProcessManager] "${serviceId}" is ready (${health.durationMs}ms)`)
+        await this._onReady(service)
         return
       }
     }
 
-    const current = this.processes.get(serviceId)
-    if (current?.pid === expectedPid && current.lifecycleState === "starting") {
-      await this.setFailed(serviceId, `Health check did not pass within ${timeoutMs / 1000}s`)
+    let current = this.processes.get(serviceId)
+    if (
+      current?.pid !== expectedPid
+      || (current.lifecycleState !== "starting" && current.lifecycleState !== "recovering")
+    ) return
+
+    const slowMessage = `Still recovering after ${timeoutMs / 1000}s; health checks will continue`
+    this.setLifecycleState(serviceId, "recovering", {
+      intendedState: "running",
+      recoveryReason: slowMessage,
+      lastError: undefined,
+    })
+    await this.saveState()
+    console.warn(`[ProcessManager] "${serviceId}" ${slowMessage.toLowerCase()}`)
+
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, RECOVERY_HEALTH_POLL_INTERVAL_MS))
+      current = this.processes.get(serviceId)
+      if (!current || current.pid !== expectedPid || current.lifecycleState !== "recovering") return
+      if (!this._isProcessAlive(current.pid)) {
+        await this.setFailed(serviceId, "Recovery runner exited before becoming ready")
+        return
+      }
+      const identity = await this._verifyRunnerIdentity(current, service)
+      if (!identity) {
+        await this.setFailed(serviceId, "Recovery runner identity or heartbeat was lost")
+        return
+      }
+      const health = await this._checkHealth(service)
+      if (health.status === "pass") {
+        await this.setRunning(serviceId)
+        console.log(`[ProcessManager] "${serviceId}" recovered and is ready (${health.durationMs}ms)`)
+        await this._onReady(service)
+        return
+      }
     }
   }
 
@@ -912,7 +970,18 @@ export class ProcessManager {
 
   async observe(service: ServiceConfig): Promise<ServiceProcessState | null> {
     const state = this.processes.get(service.id)
-    if (!state || state.lifecycleState !== "running") return state ?? null
+    if (!state) return null
+    if (state.lifecycleState === "recovering") {
+      const health = await this._checkHealth(service)
+      const portPid = await this._findPidOnPort(service.port)
+      const verified = await this._verifyLaunchRecord(state, service, health.status === "pass", portPid)
+      if (verified) {
+        await this.setRunning(service.id)
+        return this.processes.get(service.id) ?? state
+      }
+      return state
+    }
+    if (state.lifecycleState !== "running") return state
     const health = await this._checkHealth(service)
     const portPid = await this._findPidOnPort(service.port)
     const verified = await this._verifyLaunchRecord(state, service, health.status === "pass", portPid)
