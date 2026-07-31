@@ -187,11 +187,10 @@ describe("named Tailscale Service helpers", () => {
       ["serve", "drain", "svc:devplanner-api"],
       ["serve", "--service=svc:devplanner-api", "--https=443", "off"],
       ["serve", "--service=svc:devplanner-api", "--https=443", "http://127.0.0.1:17103"],
-      ["serve", "advertise", "svc:devplanner-api"],
     ])
   })
 
-  it("does not re-advertise an already connected matching service", async () => {
+  it("does not re-advertise a matching service when advertised is true", async () => {
     const executor = new FakeExecutor({
       "serve get-config --all": JSON.stringify({
         services: {
@@ -208,6 +207,98 @@ describe("named Tailscale Service helpers", () => {
     expect(executor.calls).toEqual([
       ["serve", "get-config", "--all"],
     ])
+  })
+
+  it("treats omitted advertised as connected, skips mutation, and clears stale errors", async () => {
+    const serviceWithStaleError = { ...service, id: "devplanner-api-omitted-advertised" }
+    const failingExecutor: TailscaleExecutor = {
+      async execute() {
+        throw new Error("NoState")
+      },
+    }
+    await expect(advertiseTailscaleService(serviceWithStaleError, failingExecutor))
+      .rejects.toThrow("NoState")
+
+    const executor = new FakeExecutor({
+      "serve get-config --all": JSON.stringify({
+        services: {
+          "svc:devplanner-api": {
+            endpoints: { "tcp:443": "http://127.0.0.1:17103" },
+          },
+        },
+      }),
+    })
+    await restoreTailscaleWhenReady(serviceWithStaleError, async () => true, executor, 1, 0)
+
+    const machine = {
+      state: "connected" as const,
+      backendState: "Running",
+      tailnetDomain: "bangus-city.ts.net",
+      tags: ["tag:dev-service-host"],
+      serviceHostCapability: {},
+      error: null,
+    }
+    const connected = checkTailscaleService(
+      serviceWithStaleError,
+      true,
+      machine,
+      {
+        services: {
+          "svc:devplanner-api": {
+            endpoints: { "tcp:443": "http://127.0.0.1:17103" },
+          },
+        },
+      },
+    )
+    const explicitlyDrained = checkTailscaleService(
+      serviceWithStaleError,
+      true,
+      machine,
+      {
+        services: {
+          "svc:devplanner-api": {
+            advertised: false,
+            endpoints: { "tcp:443": "http://127.0.0.1:17103" },
+          },
+        },
+      },
+    )
+
+    expect(executor.calls).toEqual([["serve", "get-config", "--all"]])
+    expect(connected).toMatchObject({
+      status: "connected",
+      desiredEnabled: true,
+      lastError: null,
+    })
+    expect(explicitlyDrained.lastError).toBeNull()
+  })
+
+  it("keeps saved-Off intent when a matching live Service is advertised", () => {
+    const result = checkTailscaleService(
+      { ...service, tailscaleServiceEnabled: false },
+      true,
+      {
+        state: "connected",
+        backendState: "Running",
+        tailnetDomain: "bangus-city.ts.net",
+        tags: ["tag:dev-service-host"],
+        serviceHostCapability: {},
+        error: null,
+      },
+      {
+        services: {
+          "svc:devplanner-api": {
+            endpoints: { "tcp:443": "http://127.0.0.1:17103" },
+          },
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      status: "connected",
+      desiredEnabled: false,
+      lastWarning: expect.stringContaining("saved desired state is off"),
+    })
   })
 
   it("reports an observed connected service despite a stale command error", async () => {
@@ -246,7 +337,10 @@ describe("named Tailscale Service helpers", () => {
     clearTailscaleServiceMessages(serviceWithStaleError.id)
   })
 
-  it("accepts NoState when an immediate reread confirms the advertisement", async () => {
+  it.each([
+    ["explicit true", true],
+    ["omitted", undefined],
+  ])("accepts NoState when an immediate reread confirms advertisement is %s", async (_, advertised) => {
     let advertiseAttempted = false
     const executor: TailscaleExecutor = {
       async execute(args) {
@@ -258,7 +352,7 @@ describe("named Tailscale Service helpers", () => {
           stdout: JSON.stringify({
             services: {
               "svc:devplanner-api": {
-                advertised: true,
+                ...(advertised === undefined ? {} : { advertised }),
                 endpoints: { "tcp:443": "http://127.0.0.1:17103" },
               },
             },
@@ -269,5 +363,33 @@ describe("named Tailscale Service helpers", () => {
     }
     await expect(advertiseTailscaleService(service, executor)).resolves.toBeUndefined()
     expect(advertiseAttempted).toBe(true)
+  })
+
+  it.each([
+    ["an absent record", {}],
+    ["a mismatched target", {
+      "svc:devplanner-api": {
+        endpoints: { "tcp:443": "http://127.0.0.1:9999" },
+      },
+    }],
+    ["an explicitly drained record", {
+      "svc:devplanner-api": {
+        advertised: false,
+        endpoints: { "tcp:443": "http://127.0.0.1:17103" },
+      },
+    }],
+  ])("retains NoState when the reread finds %s", async (_, services) => {
+    const executor: TailscaleExecutor = {
+      async execute(args) {
+        if (args[1] === "advertise") throw new Error("NoState")
+        return {
+          stdout: JSON.stringify({ services }),
+          stderr: "",
+        }
+      },
+    }
+
+    await expect(advertiseTailscaleService(service, executor)).rejects.toThrow("NoState")
+    clearTailscaleServiceMessages(service.id)
   })
 })

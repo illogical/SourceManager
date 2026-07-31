@@ -2,13 +2,9 @@
 title: Dev Server Source Manager API v1 — Spec
 type: spec
 created: 2026-03-01
-updated: 2026-06-01
-tags: [openclaw, dev-server, api, git, workflow, security]
-project: openclaw
+updated: 2026-07-30
+tags: [dev-server, api, git, workflow, security]
 status: active
-sources:
-  - http://192.168.7.45:17106
-  - https://docs.openclaw.ai
 owner: scribe
 related: []
 ---
@@ -39,6 +35,8 @@ related: []
 - Process lifecycle endpoints: start, stop, and restart services independently of git updates.
 - Port conflict safety: refuse to start when the target port belongs to an
   unverified process; never automatically adopt or kill it.
+- Named Tailscale Service exposure with persisted desired state, observed live
+  status, and bounded startup reconciliation for healthy desired-On services.
 - All requests and all run operations logged to daily-rotating NDJSON files.
 
 ## Acceptance criteria
@@ -47,6 +45,9 @@ related: []
 - [ ] Responses include structured step results, duration, and chat-ready summary details.
 - [ ] Config-driven security controls (global token, optional IP allowlist) and NDJSON run logs are implemented.
 - [ ] Start/stop/restart endpoints manage process state correctly across port conflicts and API restarts.
+- [ ] Startup preserves an already advertised matching Tailscale Service,
+      repairs an explicitly drained desired-On Service once, and does not let a
+      stale `NoState` command error override authoritative live configuration.
 - [ ] Request logging captures all calls with sanitized payloads.
 
 ## Threat model & security controls
@@ -84,7 +85,13 @@ related: []
           "scriptName": "dev",
           "installCommand": "bun install",
           "allowedIps": ["203.0.113.0/24"],
-          "tags": []
+          "tags": [],
+          "tailnetExposureMode": "tailscale-service",
+          "tailscaleServiceName": "my-app-web",
+          "tailscaleServiceEnabled": true,
+          "tailscaleServiceProtocol": "https",
+          "tailscaleServicePort": 443,
+          "tailscaleServiceTarget": "http://127.0.0.1:3000"
         }
       ]
     }
@@ -126,11 +133,17 @@ Required runtime environment values are `SOURCEMANAGER_PORT`,
 | `installCommand` | No | — | Override the install command entirely (split on spaces) |
 | `allowedIps` | No | `[]` | Per-service CIDR allowlist |
 | `tags` | No | `[]` | Arbitrary string tags for filtering |
-| `tailnetHostname` | No | — | Tailscale hostname for this service |
-| `tailnetDomain` | No | — | Tailscale domain (e.g. `tail12345.ts.net`) |
-| `tailscaleServeEnabled` | No | `false` | Whether Tailscale Serve is active for this service |
-| `tailscaleServeMode` | No | — | `"https"` or `"http"` |
-| `tailscaleServeTarget` | No | — | Upstream target URL for Tailscale Serve |
+| `tailnetExposureMode` | No | — | Set to `"tailscale-service"` for named-Service exposure |
+| `tailscaleServiceName` | No | — | Named Service slug without the `svc:` prefix |
+| `tailscaleServiceEnabled` | No | `false` | Persisted desired Tailnet state; not a snapshot of live advertisement |
+| `tailscaleServiceProtocol` | No | `"https"` | Named-Service protocol; only HTTPS is supported |
+| `tailscaleServicePort` | No | `443` | Tailnet-facing HTTPS port |
+| `tailscaleServiceTarget` | No | — | Local HTTP/HTTPS target forwarded by Tailscale |
+| `tailnetDomain` | No | — | Optional Tailnet DNS suffix used when live machine status cannot supply it |
+
+The legacy `tailnetHostname`, `tailscaleServeEnabled`, `tailscaleServeMode`, and
+`tailscaleServeTarget` fields remain readable for backward compatibility. New
+configuration uses the named-Service fields above.
 
 ## API surface
 
@@ -156,6 +169,9 @@ Required runtime environment values are `SOURCEMANAGER_PORT`,
 | POST | `/v1/repos/:repoId/services/:serviceId/stop` | Stop the service process (idempotent) |
 | POST | `/v1/repos/:repoId/services/:serviceId/restart` | Restart (stop + start) the service |
 | POST | `/v1/repos/:repoId/services/:serviceId/update` | Git update workflow (pull/branch switch + install/restart) |
+| GET | `/v1/tailscale/status` | Tailscale host status and observed state for configured named Services |
+| POST | `/v1/tailscale/services/:serviceId/service/enable` | Persist desired state On and configure/advertise the named Service |
+| POST | `/v1/tailscale/services/:serviceId/service/disable` | Persist desired state Off, drain, and remove the endpoint |
 
 ### POST .../update — request body
 
@@ -201,6 +217,42 @@ health. Previously running unavailable services are restored through a
 two-worker queue with an independent readiness threshold per service (30 seconds
 by default). A verified live process remains `recovering` after the threshold,
 keeps intended state Running, and continues background health checks.
+
+## Tailnet startup reconciliation
+
+`tailscaleServiceEnabled` is persisted user intent. The dashboard toggle
+reflects that value; the Tailnet badge reflects observed machine and Serve
+state. SourceManager must not silently persist a saved-Off Service as On merely
+because a stale live advertisement exists.
+
+After a desired-On local service becomes healthy, SourceManager reads
+`tailscale serve get-config --all` before issuing a mutation. A Service is
+connected only when the expected named record and HTTPS endpoint exist, the
+normalized local target matches, and `advertised` is not explicitly `false`.
+Tailscale omits the optional `advertised` field for the normal advertised state,
+so both `true` and omission mean advertised.
+
+Startup reconciliation follows these rules:
+
+1. A matching advertised Service is authoritative. Clear stale command errors
+   and issue no enable or advertise command.
+2. A matching Service with `advertised: false` receives one bounded per-Service
+   Off-then-On repair. Do not use `tailscale serve reset`, and do not run a
+   redundant `tailscale serve advertise` after the endpoint-enable command.
+3. A missing or mismatched endpoint is configured through the existing
+   per-Service enable path.
+4. If enable or advertise returns `NoState`, immediately reread live Serve
+   configuration. Treat the operation as successful only when the expected
+   endpoint and target are present and `advertised` is not explicitly `false`;
+   otherwise retain the command error.
+5. Do not retry automatically again during the same SourceManager startup.
+
+If live Serve state cannot be read while desired intent is On, report
+`enabled_unverified` rather than claiming the Service is connected or changing
+the saved toggle.
+
+The implementation plan and acceptance scenarios are recorded in
+[Tailnet `NoState` Startup Reconciliation](features/tailnet-nostate-startup-reconciliation.md).
 
 ## Safe update state machine
 

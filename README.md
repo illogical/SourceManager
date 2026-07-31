@@ -256,6 +256,9 @@ Requests without a valid token receive `401 Unauthorized`.
 | GET | `/v1/config` | Yes | Read editable config snapshot (excludes token) |
 | POST | `/v1/config/validate` | Yes | Validate proposed config; returns errors + diff |
 | POST | `/v1/config/apply` | Yes | Atomically write validated config to disk |
+| GET | `/v1/tailscale/status` | Yes | Read Tailscale host and named-Service status |
+| POST | `/v1/tailscale/services/:serviceId/service/enable` | Yes | Persist Tailnet intent On and configure/advertise the endpoint |
+| POST | `/v1/tailscale/services/:serviceId/service/disable` | Yes | Persist Tailnet intent Off, drain, and remove the endpoint |
 
 ### POST /v1/repos/:repoId/services/:serviceId/update
 
@@ -354,6 +357,13 @@ Runtime values are configured in environment files:
 | `installCommand` | No | Override install command entirely |
 | `allowedIps` | No | CIDR IP allowlist for this service |
 | `tags` | No | Arbitrary string tags |
+| `tailnetExposureMode` | No | Set to `tailscale-service` for named-Service exposure |
+| `tailscaleServiceName` | No | Named Service slug without the `svc:` prefix |
+| `tailscaleServiceEnabled` | No | Persisted desired Tailnet state (default `false`) |
+| `tailscaleServiceProtocol` | No | `https` (the only supported protocol) |
+| `tailscaleServicePort` | No | Tailnet-facing HTTPS port (default `443`) |
+| `tailscaleServiceTarget` | No | Local `http://` or `https://` target forwarded by Tailscale |
+| `tailnetDomain` | No | Optional Tailnet DNS suffix used when live machine status cannot supply it |
 
 **`packageManager: "auto"`** detects from lockfiles in the repo root:
 `bun.lockb` → bun, `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `package-lock.json` → npm, else → bun.
@@ -417,10 +427,10 @@ Services transition through six states: `starting` or `recovering` →
 The project has two test runners:
 
 ```bash
-bun run test           # bun:test — config, middleware, services, routes (103 tests)
-bun run test:vitest    # Vitest — backend + frontend tests (173 tests)
-bun run test:frontend  # Vitest frontend only (63 tests, jsdom)
-bun run test:backend   # Vitest backend only (110 tests, node)
+bun run test           # bun:test — config, middleware, services, routes (104 tests)
+bun run test:vitest    # Vitest — backend + frontend tests (195 passed, 1 skipped)
+bun run test:frontend  # Vitest frontend only (64 tests, jsdom)
+bun run test:backend   # Vitest backend only (131 passed, 1 skipped)
 bun run test:all       # all suites in sequence
 ```
 
@@ -444,6 +454,7 @@ Vitest runs separately to cover the backend config accessors, ProcessManager lif
 | `tests/vitest/config.test.ts` | Vitest/node | Schema validation, config accessors (`getRepo`, `getService`, `getAllServices`, etc.) |
 | `tests/vitest/processManager.test.ts` | Vitest/node | Lifecycle state machine, health poll, idempotent stop, port tracking |
 | `tests/vitest/routes/repos.test.ts` | Vitest/node | All 7 repos route handlers (GET list/detail/service/logs, POST start/stop/restart) |
+| `tests/vitest/services/tailscale.test.ts` | Vitest/node | Named-Service commands, tri-state advertisement, startup repair, and `NoState` verification |
 | `frontend/src/__tests__/client.test.ts` | Vitest/jsdom | API client: token helpers, auth errors, request headers, response parsing |
 | `frontend/src/__tests__/Settings.test.tsx` | Vitest/jsdom | Token form: save, test-connection, sign-out |
 | `frontend/src/__tests__/LifecycleBadge.test.tsx` | Vitest/jsdom | Badge label and colour class for all five lifecycle states |

@@ -45,6 +45,20 @@ interface ServeConfig {
   services?: Record<string, ServeServiceConfig>
 }
 
+function isServeServiceAdvertised(service: ServeServiceConfig | undefined): boolean {
+  // Tailscale omits the optional advertised field for the normal advertised
+  // state. Only an explicit false means the Service is drained.
+  return service !== undefined && service.advertised !== false
+}
+
+function serviceEndpointMatches(
+  service: ServeServiceConfig | undefined,
+  named: NamedServiceConfig,
+): boolean {
+  const target = service?.endpoints?.[`tcp:${named.httpsPort}`]
+  return Boolean(target && normalizeTarget(target) === named.target)
+}
+
 export interface TailscaleServiceCheck {
   serviceId: string
   configured: boolean
@@ -234,7 +248,7 @@ export function checkTailscaleService(
   const cliName = serviceNameToCliName(named.serviceName)
   const configured = serveConfig.services?.[cliName]
   const endpointTarget = configured?.endpoints?.[`tcp:${named.httpsPort}`]
-  const targetMatches = endpointTarget ? normalizeTarget(endpointTarget) === named.target : false
+  const targetMatches = serviceEndpointMatches(configured, named)
   let status: TailscaleServiceState
 
   const localRunning = localState === true || localState === "running"
@@ -248,9 +262,8 @@ export function checkTailscaleService(
   else if (!serveConfigAvailable) status = "unavailable"
   else if (!configured || !endpointTarget) status = "not_advertised"
   else if (!targetMatches) status = "mismatch"
-  else if (configured.advertised === false) status = "not_advertised"
+  else if (!isServeServiceAdvertised(configured)) status = "not_advertised"
   else if (isPendingApproval(machine.serviceHostCapability, cliName)) status = "pending_approval"
-  else if (lastError && configured.advertised !== true) status = "error"
   else status = "connected"
 
   const observedWarning = status === "connected" && !named.desiredEnabled
@@ -304,8 +317,7 @@ export async function advertiseTailscaleService(service: ServiceConfig, executor
       if (!/NoState/i.test(safeError(error))) throw error
       const config = await readServeConfig(executor)
       const current = config.services?.[serviceNameToCliName(named.serviceName)]
-      const target = current?.endpoints?.[`tcp:${named.httpsPort}`]
-      if (!target || normalizeTarget(target) !== named.target || current?.advertised !== true) throw error
+      if (!serviceEndpointMatches(current, named) || !isServeServiceAdvertised(current)) throw error
     }
   })
 }
@@ -346,7 +358,7 @@ export async function prepareTailscaleForStop(
   if (!named) return { success: true, warning: null }
   try {
     const current = (await readServeConfig(executor)).services?.[serviceNameToCliName(named.serviceName)]
-    if (!current || current.advertised === false) {
+    if (!isServeServiceAdvertised(current)) {
       return { success: true, warning: null }
     }
     await drainTailscaleService(service, executor)
@@ -382,25 +394,19 @@ export async function restoreTailscaleWhenReady(
       try {
         const config = await readServeConfig(executor)
         const current = config.services?.[serviceNameToCliName(named.serviceName)]
-        const target = current?.endpoints?.[`tcp:${named.httpsPort}`]
-        if (target && normalizeTarget(target) === named.target && current?.advertised === false) {
+        const targetMatches = serviceEndpointMatches(current, named)
+        if (targetMatches && !isServeServiceAdvertised(current)) {
           // One bounded repair for the stale saved-On/observed-Off state. This
           // models the proven per-service Off then On recovery and never resets
           // unrelated Serve configuration.
           await disableTailscaleService(service, executor)
           await enableTailscaleService(service, executor)
-          await advertiseTailscaleService(service, executor)
-        } else if (
-          target
-          && normalizeTarget(target) === named.target
-          && current?.advertised !== true
-        ) {
-          await advertiseTailscaleService(service, executor)
-        } else {
-          if (!target || normalizeTarget(target) !== named.target) {
-            await enableTailscaleService(service, executor)
-          }
+        } else if (!targetMatches) {
+          await enableTailscaleService(service, executor)
         }
+        // Otherwise live Serve state is authoritative. The endpoint command
+        // advertises named Services automatically, and the advertised field is
+        // normally omitted in this state.
         clearTailscaleServiceMessages(service.id)
       } catch (err) {
         const detail = safeError(err)
@@ -408,8 +414,7 @@ export async function restoreTailscaleWhenReady(
           try {
             const observed = await readServeConfig(executor)
             const current = observed.services?.[serviceNameToCliName(named.serviceName)]
-            const target = current?.endpoints?.[`tcp:${named.httpsPort}`]
-            if (target && normalizeTarget(target) === named.target && current.advertised === true) {
+            if (serviceEndpointMatches(current, named) && isServeServiceAdvertised(current)) {
               clearTailscaleServiceMessages(service.id)
               return
             }

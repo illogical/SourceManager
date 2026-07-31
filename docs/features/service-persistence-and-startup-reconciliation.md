@@ -356,6 +356,24 @@ On SourceManager startup:
 - retain the current non-blocking behavior when the Tailscale daemon is
   unavailable
 
+Tailscale's Service configuration uses a tri-state `advertised` field. An
+explicit `false` means the host is drained; `true` or an omitted field means the
+host is advertised. Startup reconciliation must apply that interpretation
+consistently before issuing a mutation:
+
+1. A matching endpoint that is already advertised is authoritative. Clear stale
+   command errors and do not issue another advertise command.
+2. A matching endpoint with `advertised: false` receives one bounded
+   per-Service Off-then-On repair. The endpoint-enable command configures and
+   advertises the named Service, so do not follow it with a redundant
+   `tailscale serve advertise`.
+3. If an enable or advertise command returns `NoState`, immediately reread
+   `tailscale serve get-config --all`. Accept the command as successful only
+   when the expected endpoint and target are present and `advertised` is not
+   explicitly false.
+4. Keep `tailscaleServiceEnabled` as persisted user intent. Observing a stale
+   live advertisement must not silently change a saved-Off toggle to On.
+
 An advertisement can point to a dead local target while SourceManager is
 offline. This is an accepted tradeoff of the preserve-on-shutdown model. Once
 SourceManager returns, recovery or conflict status must make the condition
