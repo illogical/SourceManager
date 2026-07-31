@@ -21,6 +21,7 @@ import {
   STARTUP_RECONCILIATION_TIMEOUT_MS,
 } from "./startupStatus"
 import { readRecentServiceOutput } from "./serviceOutput"
+import { spawnDetachedProcess } from "./detachedProcess"
 
 const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
 const STATE_PATH = join(_dir, "..", "..", "data", "state.json")
@@ -116,17 +117,12 @@ export class ProcessManager {
   _isProcessAlive: (pid: number) => boolean = isProcessAlive
   _findPidOnPort: (port: number) => Promise<number | null> = findPidOnPort
   _isDescendantProcess: (pid: number, ancestorPid: number) => Promise<boolean> = isDescendantProcess
-  _spawnProcess: (command: string[], opts: object) => { pid: number; exited: Promise<number>; unref?: () => void } = (cmd, opts) => {
-    const proc = spawn(cmd[0], cmd.slice(1), opts)
-    return {
-      pid: proc.pid ?? 0,
-      exited: new Promise<number>((resolve, reject) => {
-        proc.once("exit", (code) => resolve(code ?? 1))
-        proc.once("error", reject)
-      }),
-      unref: () => proc.unref(),
-    }
-  }
+  _spawnProcess: (
+    command: string[],
+    opts: object,
+  ) => Promise<{ pid: number; exited: Promise<number>; unref?: () => void }>
+    | { pid: number; exited: Promise<number>; unref?: () => void } = (cmd, opts) =>
+      spawnDetachedProcess(cmd, opts)
   _logLifecycleRun: typeof logLifecycleRun = logLifecycleRun
   _onUnexpectedExit: (serviceId: string) => void | Promise<void> = () => {}
   _onReady: (service: ServiceConfig) => void | Promise<void> = () => {}
@@ -379,7 +375,7 @@ export class ProcessManager {
       await writeFile(manifestPath, JSON.stringify(manifest, null, 2), { mode: 0o600 })
       await chmod(manifestPath, 0o600).catch(() => {})
       await this._restrictRuntimePermissions([runDirectory, logDirectory])
-      proc = this._spawnProcess([process.execPath, RUNNER_PATH, manifestPath], {
+      proc = await this._spawnProcess([process.execPath, RUNNER_PATH, manifestPath], {
         detached: true,
         windowsHide: true,
         stdio: "ignore",

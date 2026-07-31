@@ -1,6 +1,6 @@
 # Runtime data (do not commit)
 data/projects.json
-data/state.json
+data/state.json*
 data/logs/
 data/runtime/
 
