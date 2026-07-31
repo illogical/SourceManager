@@ -1,5 +1,7 @@
 import type {
   ReposResponse,
+  GlobalStatusRefreshResponse,
+  ServiceStatusRefreshResponse,
   UpdateRequest,
   EditableConfig,
   ConfigResponse,
@@ -115,6 +117,17 @@ export function startService(repoId: string, serviceId: string): Promise<unknown
 export interface StopServiceResponse {
   success: boolean
   shutdownAccepted?: boolean
+}
+
+export function refreshAllStatus(): Promise<GlobalStatusRefreshResponse> {
+  return apiFetch<GlobalStatusRefreshResponse>("/v1/status/refresh", { method: "POST" })
+}
+
+export function refreshServiceStatus(repoId: string, serviceId: string): Promise<ServiceStatusRefreshResponse> {
+  return apiFetch<ServiceStatusRefreshResponse>(
+    `/v1/repos/${repoId}/services/${serviceId}/status/refresh`,
+    { method: "POST" },
+  )
 }
 
 export function stopService(repoId: string, serviceId: string): Promise<StopServiceResponse> {

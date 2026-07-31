@@ -4,9 +4,9 @@ import { readFile, writeFile, mkdir, chmod, rename } from "node:fs/promises"
 import { spawn } from "node:child_process"
 import { detectPackageManager } from "./installer"
 import { checkHealth } from "./healthCheck"
-import { logLifecycleRun } from "./runLogger"
+import { logLifecycleRun, logStatusObservation } from "./runLogger"
 import { packageManagerExecutable, packageManagerRunCommand, type RunnablePackageManager } from "./packageManager"
-import type { HealthCheckResult, LifecycleState, PortEntry, RepoConfig, ServiceConfig, ServiceProcessState, StepResult } from "../types"
+import type { HealthCheckResult, LifecycleState, ObservedServiceStatus, PortEntry, RepoConfig, ServiceConfig, ServiceProcessState, StatusObservationSource, StepResult } from "../types"
 import {
   fingerprintCommand,
   verifyRunnerStatus,
@@ -109,6 +109,7 @@ export class ProcessManager {
   private processes = new Map<string, ServiceProcessState>()
   private portMap = new Map<number, string>() // port → serviceId
   private outputs = new Map<string, { runId: string; logDirectory: string }>()
+  private observations = new Map<string, ObservedServiceStatus>()
   private stateWriteQueue: Promise<void> = Promise.resolve()
 
   // ── Overridable for testing ──────────────────────────────────────────────────
@@ -124,6 +125,7 @@ export class ProcessManager {
     | { pid: number; exited: Promise<number>; unref?: () => void } = (cmd, opts) =>
       spawnDetachedProcess(cmd, opts)
   _logLifecycleRun: typeof logLifecycleRun = logLifecycleRun
+  _logStatusObservation: typeof logStatusObservation = logStatusObservation
   _onUnexpectedExit: (serviceId: string) => void | Promise<void> = () => {}
   _onReady: (service: ServiceConfig) => void | Promise<void> = () => {}
   _verifyLaunchRecord: (
@@ -964,47 +966,119 @@ export class ProcessManager {
     return this.processes.get(serviceId) ?? null
   }
 
-  async observe(service: ServiceConfig): Promise<ServiceProcessState | null> {
+  async observe(
+    service: ServiceConfig,
+    source: StatusObservationSource = "scheduled",
+    repoId?: string,
+  ): Promise<ObservedServiceStatus> {
+    const observationStartedAt = Date.now()
     const state = this.processes.get(service.id)
-    if (!state) return null
-    if (state.lifecycleState === "recovering") {
-      const health = await this._checkHealth(service)
-      const portPid = await this._findPidOnPort(service.port)
-      const verified = await this._verifyLaunchRecord(state, service, health.status === "pass", portPid)
-      if (verified) {
-        await this.setRunning(service.id)
-        return this.processes.get(service.id) ?? state
-      }
-      return state
-    }
-    if (state.lifecycleState !== "running") return state
     const health = await this._checkHealth(service)
     const portPid = await this._findPidOnPort(service.port)
-    const verified = await this._verifyLaunchRecord(state, service, health.status === "pass", portPid)
-    if (verified) {
-      const updated = {
+    const runnerIdentity = state ? await this._verifyRunnerIdentity(state, service) : null
+    const verified = state && health.status === "pass"
+      ? await this._verifyLaunchRecord(state, service, true, portPid)
+      : null
+    const availability = health.status === "pass" ? "healthy" : "unhealthy"
+    const management = availability === "healthy"
+      ? verified ? "managed" : state ? "control_lost" : "unmanaged"
+      : runnerIdentity ? "managed" : state ? "control_lost" : "unmanaged"
+    const checkedAt = new Date().toISOString()
+    const diagnosticCode = management === "control_lost"
+      ? availability === "healthy" ? "SERVICE_PROCESS_OWNERSHIP_CONFLICT" : "SERVICE_INTERRUPTED"
+      : null
+    const message = management === "control_lost"
+      ? availability === "healthy"
+        ? "Service is healthy, but SourceManager runner control is unavailable"
+        : "SourceManager runner control is unavailable and the health check failed"
+      : management === "unmanaged" && availability === "healthy"
+        ? "A healthy service is present, but it was not launched by SourceManager"
+        : health.status === "fail" ? health.detail ?? "Health check failed" : null
+
+    let supervisorDiagnostic = state?.lastSupervisorDiagnostic
+    if (management === "control_lost" && state?.logDirectory) {
+      supervisorDiagnostic = await readLatestRunnerDiagnostic(state.logDirectory) ?? supervisorDiagnostic
+    }
+
+    const observation: ObservedServiceStatus = {
+      availability: { state: availability },
+      management: { state: management },
+      checkedAt,
+      healthDurationMs: health.durationMs,
+      healthError: health.status === "fail" ? health.detail ?? "Health check failed" : null,
+      listenerPid: portPid,
+      runnerPid: runnerIdentity?.runnerPid ?? state?.pid ?? null,
+      runnerHeartbeatAt: runnerIdentity?.heartbeatAt ?? state?.lastRunnerHeartbeatAt ?? null,
+      diagnosticCode,
+      message: supervisorDiagnostic && management === "control_lost"
+        ? `${message}. Last runner diagnostic: ${supervisorDiagnostic}`
+        : message,
+    }
+    const previous = this.observations.get(service.id) ?? null
+    this.observations.set(service.id, observation)
+
+    let stateChanged = false
+    if (state && verified) {
+      stateChanged = state.lifecycleState !== "running" || Boolean(state.diagnosticCode)
+      this.processes.set(service.id, {
         ...state,
         pid: verified.runnerPid,
         childPid: verified.childPid,
-        lastVerifiedAt: new Date().toISOString(),
-      }
-      this.processes.set(service.id, updated)
-      return updated
+        lifecycleState: "running",
+        intendedState: "running",
+        lastVerifiedAt: checkedAt,
+        lastRunnerHeartbeatAt: verified.heartbeatAt,
+        lastError: undefined,
+        diagnosticCode: undefined,
+        lastSupervisorDiagnostic: supervisorDiagnostic,
+      })
+      this.portMap.set(service.port, service.id)
+    } else if (state && management === "control_lost") {
+      const lastError = message ?? "SourceManager runner control is unavailable"
+      stateChanged = state.lifecycleState !== "failed" || state.diagnosticCode !== diagnosticCode || state.lastError !== lastError
+      this.processes.set(service.id, {
+        ...state,
+        lifecycleState: "failed",
+        intendedState: state.intendedState ?? "running",
+        diagnosticCode: diagnosticCode as ServiceProcessState["diagnosticCode"],
+        lastError,
+        lastSupervisorDiagnostic: supervisorDiagnostic,
+      })
+      if (!portPid) this.portMap.delete(service.port)
+    } else if (state && runnerIdentity) {
+      this.processes.set(service.id, {
+        ...state,
+        lastRunnerHeartbeatAt: runnerIdentity.heartbeatAt,
+        lastSupervisorDiagnostic: supervisorDiagnostic,
+      })
     }
 
-    const conflict = health.status === "pass" || Boolean(portPid)
-    const updated: ServiceProcessState = {
-      ...state,
-      lifecycleState: "failed",
-      diagnosticCode: conflict ? "SERVICE_PROCESS_OWNERSHIP_CONFLICT" : "SERVICE_INTERRUPTED",
-      lastError: conflict
-        ? `The current listener${portPid ? ` (PID ${portPid})` : ""} is not owned by the saved SourceManager runner`
-        : "The verified SourceManager runner is no longer running",
+    if (stateChanged || source === "manual_global" || source === "manual_service") {
+      await this.saveState()
     }
-    this.processes.set(service.id, updated)
-    if (!portPid) this.portMap.delete(service.port)
-    await this.saveState()
-    return updated
+    if (source !== "scheduled" || observationChanged(previous, observation)) {
+      await this._logStatusObservation({
+        kind: "status_observation",
+        serviceId: service.id,
+        repoId: state?.repoId ?? repoId ?? "unknown",
+        checkedAt,
+        durationMs: Date.now() - observationStartedAt,
+        source,
+        previous: previous ? {
+          availability: previous.availability,
+          management: previous.management,
+          diagnosticCode: previous.diagnosticCode,
+        } : null,
+        current: observation,
+      }).catch((error) => {
+        console.warn(`[ProcessManager] Could not log status observation for "${service.id}": ${(error as Error).message}`)
+      })
+    }
+    return observation
+  }
+
+  getObservedStatus(serviceId: string): ObservedServiceStatus | null {
+    return this.observations.get(serviceId) ?? null
   }
 
   getAllProcesses(): ServiceProcessState[] {
@@ -1052,6 +1126,32 @@ export class ProcessManager {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+function observationChanged(
+  previous: ObservedServiceStatus | null,
+  current: ObservedServiceStatus,
+): boolean {
+  return !previous
+    || previous.availability.state !== current.availability.state
+    || previous.management.state !== current.management.state
+    || previous.diagnosticCode !== current.diagnosticCode
+}
+
+async function readLatestRunnerDiagnostic(logDirectory: string): Promise<string | null> {
+  try {
+    const content = await readFile(join(logDirectory, "runner-events.ndjson"), "utf8")
+    const lines = content.trim().split("\n").slice(-20).reverse()
+    for (const line of lines) {
+      const event = JSON.parse(line) as { event?: string; message?: string; reason?: string }
+      if (event.event === "status_write_failed" || event.event === "uncaught_exception" || event.event === "unhandled_rejection") {
+        return (event.message ?? event.reason ?? event.event).slice(0, 500)
+      }
+    }
+  } catch {
+    // Older runs do not have supervisor diagnostics.
+  }
+  return null
+}
 
 function isProcessAlive(pid: number): boolean {
   try {

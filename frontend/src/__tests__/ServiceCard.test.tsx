@@ -23,6 +23,18 @@ function makeService(overrides: Partial<ServiceSummary> = {}): ServiceSummary {
       command: null,
       lastError: null,
     },
+    observedStatus: {
+      availability: { state: "unhealthy" },
+      management: { state: "managed" },
+      checkedAt: new Date(0).toISOString(),
+      healthDurationMs: 1,
+      healthError: "not running",
+      listenerPid: null,
+      runnerPid: null,
+      runnerHeartbeatAt: null,
+      diagnosticCode: null,
+      message: null,
+    },
     tailnet: null,
     ...overrides,
   }
@@ -230,5 +242,39 @@ describe("ServiceCard", () => {
       />
     )
     expect(screen.getByText(/Process exited with code 1/)).toBeInTheDocument()
+  })
+
+  it("shows a healthy orphan as running with control attention and guarded actions", () => {
+    render(
+      <ServiceCard
+        repoId="my-repo"
+        service={makeService({
+          lifecycle: {
+            ...makeService().lifecycle,
+            state: "failed",
+            lastError: "The saved runner is unavailable",
+          },
+          observedStatus: {
+            ...makeService().observedStatus,
+            availability: { state: "healthy" },
+            management: { state: "control_lost" },
+            checkedAt: new Date().toISOString(),
+            listenerPid: 4321,
+            diagnosticCode: "SERVICE_PROCESS_OWNERSHIP_CONFLICT",
+            message: "Service is healthy, but SourceManager runner control is unavailable",
+          },
+        })}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onRestart={vi.fn()}
+        onUpdate={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText("running")).toBeInTheDocument()
+    expect(screen.getByText("Control lost")).toBeInTheDocument()
+    expect(screen.getByText("Checked just now")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Management control unavailable" })).toBeDisabled()
+    expect(screen.queryByText("The saved runner is unavailable")).not.toBeInTheDocument()
   })
 })

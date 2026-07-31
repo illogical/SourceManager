@@ -2,7 +2,7 @@
 title: Dev Server Source Manager API v1 — Spec
 type: spec
 created: 2026-03-01
-updated: 2026-07-30
+updated: 2026-07-31
 tags: [dev-server, api, git, workflow, security]
 status: active
 owner: scribe
@@ -159,16 +159,18 @@ configuration uses the named-Service fields above.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/v1/repos` | List all repos with nested services and lifecycle state |
+| GET | `/v1/repos` | Read cached repos with lifecycle and observed availability/management state |
 | GET | `/v1/repos/:repoId` | Single repo detail with all services |
 | GET | `/v1/repos/:repoId/services/:serviceId` | Single service detail with lifecycle state |
 | GET | `/v1/repos/:repoId/services/:serviceId/logs` | Recent run log entries (`?n=20`, max 100) |
 | GET | `/v1/repos/:repoId/services/:serviceId/output` | Durable combined stdout/stderr chunks |
 | GET | `/v1/repos/:repoId/services/:serviceId/output/stream` | Read-only SSE output stream |
+| POST | `/v1/repos/:repoId/services/:serviceId/status/refresh` | Refresh one service and Tailnet observation |
 | POST | `/v1/repos/:repoId/services/:serviceId/start` | Start the service process |
 | POST | `/v1/repos/:repoId/services/:serviceId/stop` | Stop the service process (idempotent) |
 | POST | `/v1/repos/:repoId/services/:serviceId/restart` | Restart (stop + start) the service |
 | POST | `/v1/repos/:repoId/services/:serviceId/update` | Git update workflow (pull/branch switch + install/restart) |
+| POST | `/v1/status/refresh` | Refresh every configured service and Tailnet observation |
 | GET | `/v1/tailscale/status` | Tailscale host status and observed state for configured named Services |
 | POST | `/v1/tailscale/services/:serviceId/service/enable` | Persist desired state On and configure/advertise the named Service |
 | POST | `/v1/tailscale/services/:serviceId/service/disable` | Persist desired state Off, drain, and remove the endpoint |
@@ -217,6 +219,19 @@ health. Previously running unavailable services are restored through a
 two-worker queue with an independent readiness threshold per service (30 seconds
 by default). A verified live process remains `recovering` after the threshold,
 keeps intended state Running, and continues background health checks.
+
+Every service summary also includes `observedStatus`. Availability is
+`healthy`, `unhealthy`, or `unknown`; management is `managed`, `control_lost`,
+`unmanaged`, or `not_applicable`. A healthy service remains operationally
+Running when management control is lost, but SourceManager does not adopt,
+stop, or restart its unverified listener. The dashboard presents this as an
+attention condition and guards unsafe actions.
+
+One coordinator performs startup, ten-second scheduled, global manual, and
+targeted manual observations with bounded concurrency and per-service request
+coalescing. Repository GET routes are passive cached reads. Status transitions
+and manual checks are logged separately; unchanged scheduled observations are
+not logged.
 
 ## Tailnet startup reconciliation
 

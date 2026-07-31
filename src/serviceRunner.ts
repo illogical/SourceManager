@@ -1,8 +1,9 @@
-import { appendFile, chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises"
+import { appendFile, chmod, mkdir, readFile, stat, unlink } from "node:fs/promises"
 import { spawn } from "node:child_process"
 import { basename, join } from "node:path"
 import type { RunnerControlRequest, RunnerManifest, RunnerStatus } from "./services/runnerProtocol"
 import { fingerprintCommand, signRunnerStatus } from "./services/runnerProtocol"
+import { RunnerStatusWriter } from "./services/runnerStatusWriter"
 
 const manifestPath = process.argv[2]
 if (!manifestPath) throw new Error("Runner manifest path is required")
@@ -18,6 +19,12 @@ let exitCode: number | null = null
 let stopping = false
 let outputQueue = Promise.resolve()
 let finalized = false
+let lastControlError: string | null = null
+
+const runnerEventPath = join(manifest.logDirectory, "runner-events.ndjson")
+const statusWriter = new RunnerStatusWriter(manifest.statusPath, {
+  temporaryPath: `${manifest.statusPath}.${process.pid}.tmp`,
+})
 
 const childExecutable = process.platform === "win32" ? "cmd.exe" : manifest.command[0]
 const childArguments = process.platform === "win32"
@@ -32,28 +39,49 @@ const child = spawn(childExecutable, childArguments, {
 })
 
 state = "running"
-child.stdout?.on("data", (chunk: Buffer) => { outputQueue = outputQueue.then(() => appendOutput(chunk)) })
-child.stderr?.on("data", (chunk: Buffer) => { outputQueue = outputQueue.then(() => appendOutput(chunk)) })
+await logRunnerEvent("runner_started", {
+  runnerPid: process.pid,
+  childPid: child.pid ?? null,
+})
+child.stdout?.on("data", (chunk: Buffer) => {
+  outputQueue = outputQueue.then(() => appendOutput(chunk)).catch((error) => logRunnerEvent("output_write_failed", {
+    message: safeMessage(error),
+  }))
+})
+child.stderr?.on("data", (chunk: Buffer) => {
+  outputQueue = outputQueue.then(() => appendOutput(chunk)).catch((error) => logRunnerEvent("output_write_failed", {
+    message: safeMessage(error),
+  }))
+})
 child.on("error", (error) => {
-  outputQueue = outputQueue.then(() => appendOutput(Buffer.from(`[runner] ${error.message}\n`)))
-  void finalize(1)
+  outputQueue = outputQueue.then(() => appendOutput(Buffer.from(`[runner] ${safeMessage(error)}\n`))).catch(() => {})
+  void logRunnerEvent("child_error", { message: safeMessage(error) }).then(() => finalize(1, "child_error"))
 })
 
-const heartbeat = setInterval(() => { void publishStatus() }, 500)
-const controls = setInterval(() => { void checkControl() }, 250)
-await publishStatus()
+const heartbeat = setInterval(() => { void publishStatusSafely("heartbeat") }, 500)
+const controls = setInterval(() => { void checkControlSafely() }, 250)
+await publishStatusSafely("startup")
 
-child.on("exit", (code) => { void finalize(code ?? (stopping ? 0 : 1)) })
+child.on("exit", (code) => { void finalize(code ?? (stopping ? 0 : 1), "child_exit") })
 
-async function finalize(code: number): Promise<void> {
+process.on("uncaughtException", (error) => {
+  void logRunnerEvent("uncaught_exception", { message: safeMessage(error) }).then(() => finalize(1, "uncaught_exception"))
+})
+process.on("unhandledRejection", (reason) => {
+  void logRunnerEvent("unhandled_rejection", { message: safeMessage(reason) }).then(() => finalize(1, "unhandled_rejection"))
+})
+
+async function finalize(code: number, reason: string): Promise<void> {
   if (finalized) return
   finalized = true
-  await outputQueue
-  exitCode = code
-  state = "exited"
   clearInterval(heartbeat)
   clearInterval(controls)
-  await publishStatus()
+  await outputQueue.catch(() => {})
+  exitCode = code
+  state = "exited"
+  await publishStatusSafely("final")
+  await statusWriter.flush()
+  await logRunnerEvent("runner_exit", { code, reason })
   process.exit(code)
 }
 
@@ -61,14 +89,14 @@ async function appendOutput(chunk: Buffer): Promise<void> {
   if (segmentBytes > 0 && segmentBytes + chunk.byteLength > manifest.maxSegmentBytes) {
     segment += 1
     segmentBytes = 0
-    await publishStatus()
+    await publishStatusSafely("segment_rotation")
   }
   await appendFile(segmentPath(segment), chunk, { mode: 0o600 })
   segmentBytes += chunk.byteLength
   await enforceRetention()
 }
 
-async function publishStatus(): Promise<void> {
+async function publishStatusSafely(reason: string): Promise<boolean> {
   const unsigned: Omit<RunnerStatus, "signature"> = {
     version: 1,
     runId: manifest.runId,
@@ -83,23 +111,39 @@ async function publishStatus(): Promise<void> {
     activeSegment: segment,
     activeSegmentBytes: segmentBytes,
   }
-  const temporary = `${manifest.statusPath}.tmp`
-  await writeFile(temporary, JSON.stringify(signRunnerStatus(unsigned, manifest.controlToken), null, 2), { mode: 0o600 })
-  await rename(temporary, manifest.statusPath)
+  try {
+    await statusWriter.publish(JSON.stringify(signRunnerStatus(unsigned, manifest.controlToken), null, 2))
+    return true
+  } catch (error) {
+    await logRunnerEvent("status_write_failed", { reason, message: safeMessage(error) })
+    return false
+  }
 }
 
-async function checkControl(): Promise<void> {
+async function checkControlSafely(): Promise<void> {
   let request: RunnerControlRequest
   try {
     request = JSON.parse(await readFile(manifest.controlPath, "utf8")) as RunnerControlRequest
-  } catch {
+    lastControlError = null
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      const message = safeMessage(error)
+      if (message !== lastControlError) {
+        lastControlError = message
+        await logRunnerEvent("control_read_failed", { message })
+      }
+    }
     return
   }
-  if (request.action !== "stop" || request.runId !== manifest.runId || request.token !== manifest.controlToken) return
+  if (request.action !== "stop" || request.runId !== manifest.runId || request.token !== manifest.controlToken) {
+    await logRunnerEvent("control_rejected", { reason: "invalid_identity_or_action" })
+    return
+  }
   await unlink(manifest.controlPath).catch(() => {})
   stopping = true
   state = "stopping"
-  await publishStatus()
+  await logRunnerEvent("stop_requested")
+  await publishStatusSafely("stop_requested")
   await stopChildTree(child.pid)
 }
 
@@ -135,6 +179,29 @@ function segmentPath(value: number): string {
 
 async function existingSize(path: string): Promise<number> {
   try { return (await stat(path)).size } catch { return 0 }
+}
+
+async function logRunnerEvent(event: string, details: Record<string, unknown> = {}): Promise<void> {
+  const sanitized = Object.fromEntries(Object.entries(details).map(([key, value]) => [
+    key,
+    typeof value === "string" ? sanitize(value) : value,
+  ]))
+  const line = JSON.stringify({
+    timestamp: new Date().toISOString(),
+    event,
+    serviceId: manifest.serviceId,
+    runId: manifest.runId,
+    ...sanitized,
+  }) + "\n"
+  await appendFile(runnerEventPath, line, { encoding: "utf8", mode: 0o600 }).catch(() => {})
+}
+
+function safeMessage(value: unknown): string {
+  return sanitize(value instanceof Error ? value.message : String(value))
+}
+
+function sanitize(value: string): string {
+  return value.replaceAll(manifest.controlToken, "[redacted]").slice(0, 2_000)
 }
 
 function validateManifest(value: RunnerManifest): void {

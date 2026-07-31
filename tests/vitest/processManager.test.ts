@@ -59,6 +59,7 @@ function makePm() {
   pm._requestRunnerStop = vi.fn(async () => ({ success: true }))
   pm._restrictRuntimePermissions = vi.fn(async () => {})
   pm._logLifecycleRun = vi.fn(async () => {})
+  pm._logStatusObservation = vi.fn(async () => {})
   pm._stopPollIntervalMs = 1
   pm._stopPollTimeoutMs = 5
   pm._spawnProcess = vi.fn(() => ({
@@ -364,6 +365,94 @@ describe("ProcessManager startup reconciliation", () => {
       recoveryAttempt: 1,
     })
     await pm.forget("test-service")
+  })
+})
+
+describe("ProcessManager.observe", () => {
+  it("reports healthy availability with verified management", async () => {
+    const pm = makePm()
+    injectProcess(pm)
+    pm._checkHealth = vi.fn(async () => ({ status: "pass" as const, durationMs: 4 }))
+    pm._findPidOnPort = vi.fn(async () => 22222)
+
+    const observed = await pm.observe(makeService(), "manual_service")
+
+    expect(observed).toMatchObject({
+      availability: { state: "healthy" },
+      management: { state: "managed" },
+      listenerPid: 22222,
+    })
+    expect(pm.getLifecycleState("test-service")).toBe("running")
+  })
+
+  it("reports a healthy orphan as running availability with control lost", async () => {
+    const pm = makePm()
+    injectProcess(pm, { intendedState: "running" })
+    pm._checkHealth = vi.fn(async () => ({ status: "pass" as const, durationMs: 4 }))
+    pm._findPidOnPort = vi.fn(async () => 33333)
+    pm._verifyRunnerIdentity = vi.fn(async () => null)
+    pm._verifyLaunchRecord = vi.fn(async () => null)
+
+    const observed = await pm.observe(makeService(), "manual_service")
+
+    expect(observed).toMatchObject({
+      availability: { state: "healthy" },
+      management: { state: "control_lost" },
+      listenerPid: 33333,
+      diagnosticCode: "SERVICE_PROCESS_OWNERSHIP_CONFLICT",
+    })
+    expect(pm.getProcess("test-service")).toMatchObject({
+      lifecycleState: "failed",
+      intendedState: "running",
+    })
+  })
+
+  it("reports a healthy service with no saved launch as unmanaged", async () => {
+    const pm = makePm()
+    pm._checkHealth = vi.fn(async () => ({ status: "pass" as const, durationMs: 3 }))
+    pm._findPidOnPort = vi.fn(async () => 44444)
+
+    const observed = await pm.observe(makeService(), "manual_service")
+
+    expect(observed.management.state).toBe("unmanaged")
+    expect(observed.availability.state).toBe("healthy")
+    expect(pm.getProcess("test-service")).toBeNull()
+  })
+
+  it("keeps management and intended state when a live runner is temporarily unhealthy", async () => {
+    const pm = makePm()
+    injectProcess(pm, { intendedState: "running" })
+    pm._checkHealth = vi.fn(async () => ({ status: "fail" as const, durationMs: 8, detail: "HTTP 503" }))
+
+    const observed = await pm.observe(makeService(), "scheduled")
+
+    expect(observed).toMatchObject({
+      availability: { state: "unhealthy" },
+      management: { state: "managed" },
+      healthError: "HTTP 503",
+    })
+    expect(pm.getProcess("test-service")).toMatchObject({
+      lifecycleState: "running",
+      intendedState: "running",
+    })
+  })
+
+  it("recovers a stale failed record when runner identity and health return", async () => {
+    const pm = makePm()
+    injectProcess(pm, {
+      lifecycleState: "failed",
+      intendedState: "running",
+      diagnosticCode: "SERVICE_PROCESS_OWNERSHIP_CONFLICT",
+      lastError: "control lost",
+    })
+    pm._checkHealth = vi.fn(async () => ({ status: "pass" as const, durationMs: 2 }))
+    pm._findPidOnPort = vi.fn(async () => 22222)
+
+    const observed = await pm.observe(makeService(), "scheduled")
+
+    expect(observed.management.state).toBe("managed")
+    expect(pm.getProcess("test-service")).toMatchObject({ lifecycleState: "running" })
+    expect(pm.getProcess("test-service")?.diagnosticCode).toBeUndefined()
   })
 })
 

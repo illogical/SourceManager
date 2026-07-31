@@ -16,6 +16,19 @@ export interface Lifecycle {
   recoveryReason?: string | null
 }
 
+export interface ObservedServiceStatus {
+  availability: { state: "healthy" | "unhealthy" | "unknown" }
+  management: { state: "managed" | "control_lost" | "unmanaged" | "not_applicable" }
+  checkedAt: string
+  healthDurationMs: number | null
+  healthError: string | null
+  listenerPid: number | null
+  runnerPid: number | null
+  runnerHeartbeatAt: string | null
+  diagnosticCode: string | null
+  message: string | null
+}
+
 export interface StartupReconciliationStatus {
   state: "pending" | "running" | "complete"
   startedAt: string | null
@@ -105,6 +118,7 @@ export interface ServiceSummary {
   tags: string[]
   allowedIps: string[]
   lifecycle: Lifecycle
+  observedStatus: ObservedServiceStatus
   tailnet: TailnetInfo | null
 }
 
@@ -120,6 +134,33 @@ export interface RepoSummary {
 
 export interface ReposResponse {
   repos: RepoSummary[]
+}
+
+export interface ServiceStatusRefreshResponse {
+  checkedAt: string
+  durationMs: number
+  result: {
+    repoId: string
+    serviceId: string
+    status: ObservedServiceStatus
+    error: string | null
+    durationMs: number
+  }
+  service: ServiceSummary
+  tailscale: TailscaleStatusResponse
+}
+
+export interface GlobalStatusRefreshResponse extends ReposResponse {
+  checkedAt: string
+  durationMs: number
+  services: Array<{
+    repoId: string
+    serviceId: string
+    status: ObservedServiceStatus
+    error: string | null
+    durationMs: number
+  }>
+  tailscale: TailscaleStatusResponse
 }
 
 // ── Update ─────────────────────────────────────────────────────────────────────

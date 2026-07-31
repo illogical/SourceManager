@@ -243,16 +243,18 @@ Requests without a valid token receive `401 Unauthorized`.
 | GET | `/health` | No | API liveness check |
 | GET | `/swagger` | No | Swagger UI (interactive docs) |
 | GET | `/swagger/json` | No | Raw OpenAPI spec |
-| GET | `/v1/repos` | Yes | List all repos with services and lifecycle state |
+| GET | `/v1/repos` | Yes | Read cached repos, lifecycle, availability, and management state |
 | GET | `/v1/repos/:repoId` | Yes | Single repo detail |
 | GET | `/v1/repos/:repoId/services/:serviceId` | Yes | Service detail + lifecycle state |
 | GET | `/v1/repos/:repoId/services/:serviceId/logs` | Yes | Recent run log entries (`?n=20`) |
 | GET | `/v1/repos/:repoId/services/:serviceId/output` | Yes | Read durable combined service output |
 | GET | `/v1/repos/:repoId/services/:serviceId/output/stream` | Yes | Stream combined output with SSE |
+| POST | `/v1/repos/:repoId/services/:serviceId/status/refresh` | Yes | Actively refresh one service and Tailnet status |
 | POST | `/v1/repos/:repoId/services/:serviceId/start` | Yes | Start the service |
 | POST | `/v1/repos/:repoId/services/:serviceId/stop` | Yes | Stop the service (idempotent) |
 | POST | `/v1/repos/:repoId/services/:serviceId/restart` | Yes | Restart the service |
 | POST | `/v1/repos/:repoId/services/:serviceId/update` | Yes | Git pull/branch switch + install/restart |
+| POST | `/v1/status/refresh` | Yes | Actively refresh every service and Tailnet status |
 | GET | `/v1/config` | Yes | Read editable config snapshot (excludes token) |
 | POST | `/v1/config/validate` | Yes | Validate proposed config; returns errors + diff |
 | POST | `/v1/config/apply` | Yes | Atomically write validated config to disk |
@@ -379,6 +381,8 @@ All operations write to daily-rotated NDJSON files in `data/logs/`:
 
 - `data/logs/requests-<date>.ndjson` — every API request (token values redacted)
 - `data/logs/runs-<date>.ndjson` — every update/start/stop/restart operation
+- `data/logs/status-observations-<date>.ndjson` — status transitions and manual checks
+- `data/logs/services/<service>/<run>/runner-events.ndjson` — sanitized runner supervisor diagnostics
 
 Logs older than 7 days are automatically deleted on startup.
 
@@ -407,6 +411,14 @@ Services transition through six states: `starting` or `recovering` →
   `recovering`, keeps intended state Running, and transitions to `running` as
   soon as health passes. Only exit, lost identity, ownership conflict, or a
   definitive launch error marks it failed.
+- Availability and management are reported separately in `observedStatus`.
+  Health determines whether the dashboard shows Running; signed runner identity,
+  heartbeat, and listener ownership determine whether SourceManager can safely
+  control it. A healthy listener with a missing supervisor is Running with an
+  amber `Control lost` warning, and unsafe lifecycle actions stay disabled.
+- A backend coordinator observes all services every ten seconds. Repository GET
+  routes return its cached snapshot; manual global and per-service POST refresh
+  routes provide explicit progress and completion feedback in the dashboard.
 - Stopping SourceManager itself does not stop managed services or drain their
   Tailnet advertisements. The SourceManager service card uses this same
   self-shutdown behavior.

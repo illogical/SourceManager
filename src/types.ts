@@ -78,6 +78,23 @@ export interface RuntimeConfigSummary {
 
 export type LifecycleState = "starting" | "recovering" | "running" | "stopping" | "stopped" | "failed"
 
+export type ServiceAvailabilityState = "healthy" | "unhealthy" | "unknown"
+export type ServiceManagementState = "managed" | "control_lost" | "unmanaged" | "not_applicable"
+export type StatusObservationSource = "startup" | "scheduled" | "manual_global" | "manual_service" | "lifecycle"
+
+export interface ObservedServiceStatus {
+  availability: { state: ServiceAvailabilityState }
+  management: { state: ServiceManagementState }
+  checkedAt: string
+  healthDurationMs: number | null
+  healthError: string | null
+  listenerPid: number | null
+  runnerPid: number | null
+  runnerHeartbeatAt: string | null
+  diagnosticCode: string | null
+  message: string | null
+}
+
 export interface ServiceProcessState {
   serviceId: string
   repoId: string
@@ -100,6 +117,8 @@ export interface ServiceProcessState {
   logDirectory?: string
   manifestPath?: string
   lastVerifiedAt?: string
+  lastRunnerHeartbeatAt?: string
+  lastSupervisorDiagnostic?: string
   recoveryAttempt?: 1
   recoveryReason?: string
 }
@@ -188,6 +207,17 @@ export interface LifecycleRunReport {
   reason: string
   steps: StepResult[]
   diagnostics?: Record<string, unknown>
+}
+
+export interface StatusObservationReport {
+  kind: "status_observation"
+  serviceId: string
+  repoId: string
+  checkedAt: string
+  durationMs: number
+  source: StatusObservationSource
+  previous: Pick<ObservedServiceStatus, "availability" | "management" | "diagnosticCode"> | null
+  current: ObservedServiceStatus
 }
 
 export type InstallMode = "auto" | "always" | "never"

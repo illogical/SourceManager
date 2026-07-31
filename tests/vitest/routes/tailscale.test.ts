@@ -58,6 +58,23 @@ vi.mock("../../../src/services/healthCheck", () => ({
   checkHealth: vi.fn(async () => ({ status: "pass", durationMs: 1 })),
 }))
 
+vi.mock("../../../src/services/statusCoordinator", () => ({
+  statusCoordinator: {
+    getObservation: vi.fn(() => ({
+      availability: { state: "healthy" },
+      management: { state: "not_applicable" },
+      checkedAt: new Date().toISOString(),
+      healthDurationMs: 1,
+      healthError: null,
+      listenerPid: 123,
+      runnerPid: 123,
+      runnerHeartbeatAt: null,
+      diagnosticCode: null,
+      message: null,
+    })),
+  },
+}))
+
 class FakeExecutor implements TailscaleExecutor {
   calls: string[][] = []
 

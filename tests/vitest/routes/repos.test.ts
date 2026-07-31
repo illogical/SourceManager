@@ -62,6 +62,25 @@ vi.mock("../../../src/services/runLogger", () => ({
   readRecentLogs: vi.fn(async () => []),
 }))
 
+vi.mock("../../../src/services/statusCoordinator", () => ({
+  statusCoordinator: {
+    getObservation: vi.fn(() => ({
+      availability: { state: "unhealthy" },
+      management: { state: "unmanaged" },
+      checkedAt: new Date(0).toISOString(),
+      healthDurationMs: 5,
+      healthError: "not running",
+      listenerPid: null,
+      runnerPid: null,
+      runnerHeartbeatAt: null,
+      diagnosticCode: null,
+      message: null,
+    })),
+    refreshService: vi.fn(),
+    refreshTailscale: vi.fn(),
+  },
+}))
+
 vi.mock("../../../src/services/applicationLifecycle", () => ({
   scheduleApplicationShutdown: vi.fn(),
 }))
@@ -71,6 +90,7 @@ beforeEach(async () => {
   const config = await import("../../../src/config")
   const { processManager } = await import("../../../src/services/processManager")
   const healthCheck = await import("../../../src/services/healthCheck")
+  const { statusCoordinator } = await import("../../../src/services/statusCoordinator")
   vi.spyOn(config, "getConfig").mockReturnValue({
     server: { port: 17106, token: "test-token", allowedIps: [] },
     repos: [testRepoWithService],
@@ -90,6 +110,18 @@ beforeEach(async () => {
   vi.spyOn(processManager, "stop").mockResolvedValue({ success: true, alreadyStopped: false, message: "Stopped", lifecycleState: "stopped" })
   vi.spyOn(processManager, "restart").mockResolvedValue({ success: true, message: "Restarted", lifecycleState: "starting", pid: 1234 })
   vi.spyOn(healthCheck, "checkHealth").mockResolvedValue({ status: "fail", durationMs: 5 })
+  vi.mocked(statusCoordinator.getObservation).mockReturnValue({
+    availability: { state: "unhealthy" },
+    management: { state: "unmanaged" },
+    checkedAt: new Date(0).toISOString(),
+    healthDurationMs: 5,
+    healthError: "not running",
+    listenerPid: null,
+    runnerPid: null,
+    runnerHeartbeatAt: null,
+    diagnosticCode: null,
+    message: null,
+  })
 })
 
 // ── App builder ───────────────────────────────────────────────────────────────
@@ -183,17 +215,29 @@ describe("GET /v1/repos/:repoId/services/:serviceId", () => {
   })
 
   it("reports a healthy untracked service as an ownership conflict", async () => {
-    const { checkHealth } = await import("../../../src/services/healthCheck")
-    vi.mocked(checkHealth).mockResolvedValue({ status: "pass", durationMs: 6 })
+    const { statusCoordinator } = await import("../../../src/services/statusCoordinator")
+    vi.mocked(statusCoordinator.getObservation).mockReturnValue({
+      availability: { state: "healthy" },
+      management: { state: "unmanaged" },
+      checkedAt: new Date().toISOString(),
+      healthDurationMs: 6,
+      healthError: null,
+      listenerPid: 22222,
+      runnerPid: null,
+      runnerHeartbeatAt: null,
+      diagnosticCode: "SERVICE_PROCESS_OWNERSHIP_CONFLICT",
+      message: "A healthy service is present, but it was not launched by SourceManager",
+    })
 
     const app = await buildApp()
     const res = await app.handle(req("/repos/my-repo/services/my-repo-web"))
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { lifecycle: { state: string; pid: number | null; command: string | null } }
+    const body = (await res.json()) as { lifecycle: { state: string; pid: number | null; command: string | null }; observedStatus: { availability: { state: string } } }
     expect(body.lifecycle.state).toBe("failed")
     expect(body.lifecycle.pid).toBeNull()
     expect(body.lifecycle.command).toBeNull()
     expect((body.lifecycle as { diagnosticCode?: string }).diagnosticCode).toBe("SERVICE_PROCESS_OWNERSHIP_CONFLICT")
+    expect(body.observedStatus.availability.state).toBe("healthy")
   })
 
   it("returns 404 for unknown serviceId", async () => {

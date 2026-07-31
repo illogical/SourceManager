@@ -159,6 +159,23 @@
   cursor: not-allowed;
 }
 
+.refreshFeedback,
+.refreshError {
+  padding: 10px 13px;
+  border: 1px solid rgba(14, 165, 233, 0.24);
+  border-radius: 8px;
+  color: #bae6fd;
+  background: rgba(14, 165, 233, 0.1);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.refreshError {
+  color: #fecdd3;
+  border-color: rgba(244, 63, 94, 0.28);
+  background: rgba(244, 63, 94, 0.1);
+}
+
 .spinning {
   animation: spin 0.85s linear infinite;
 }

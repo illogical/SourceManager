@@ -13,6 +13,8 @@ import {
   getTailscaleStatus,
   enableTailscaleService,
   disableTailscaleService,
+  refreshAllStatus,
+  refreshServiceStatus,
 } from "../api/client"
 import type { EditableConfig } from "../api/types"
 
@@ -232,6 +234,23 @@ describe("Tailscale API functions", () => {
     expect(fetch.mock.calls[0][0]).toBe("/v1/tailscale/services/my-api/service/enable")
     expect(fetch.mock.calls[1][0]).toBe("/v1/tailscale/services/my-api/service/disable")
     expect(fetch.mock.calls[0][1].method).toBe("POST")
+    expect(fetch.mock.calls[1][1].method).toBe("POST")
+  })
+})
+
+describe("status refresh API functions", () => {
+  beforeEach(() => setToken("test-token"))
+
+  it("calls global and targeted refresh routes with POST", async () => {
+    const fetch = mockFetch(200, { repos: [], services: [], tailscale: { services: [] } })
+    vi.stubGlobal("fetch", fetch)
+
+    await refreshAllStatus()
+    await refreshServiceStatus("my-repo", "my-api")
+
+    expect(fetch.mock.calls[0][0]).toBe("/v1/status/refresh")
+    expect(fetch.mock.calls[0][1].method).toBe("POST")
+    expect(fetch.mock.calls[1][0]).toBe("/v1/repos/my-repo/services/my-api/status/refresh")
     expect(fetch.mock.calls[1][1].method).toBe("POST")
   })
 })

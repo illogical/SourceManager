@@ -20,12 +20,13 @@ export default function RepoList() {
   const [repos, setRepos] = useState<RepoSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [refreshingServices, setRefreshingServices] = useState<Set<string>>(() => new Set())
+  const [refreshFeedback, setRefreshFeedback] = useState<{ message: string; error: boolean } | null>(null)
   const [tailscaleStatus, setTailscaleStatus] = useState<TailscaleStatusResponse | null>(null)
   const [startup, setStartup] = useState<StartupReconciliationStatus | null>(null)
   const [applicationState, setApplicationState] = useState<"running" | "shutting_down">("running")
 
-  const fetchRepos = useCallback(async (manual = false) => {
-    if (manual) setIsRefreshing(true)
+  const fetchRepos = useCallback(async () => {
     try {
       const data = await client.listRepos()
       setRepos(data.repos)
@@ -38,8 +39,6 @@ export default function RepoList() {
       } else {
         setError("Cannot reach SourceManager API — is the backend running?")
       }
-    } finally {
-      if (manual) setIsRefreshing(false)
     }
   }, [])
 
@@ -83,7 +82,7 @@ export default function RepoList() {
 
   async function handleStart(repoId: string, serviceId: string) {
     await client.startService(repoId, serviceId)
-    await Promise.all([fetchRepos(), fetchTailscale()])
+    await handleStatusRefresh(repoId, serviceId)
   }
 
   async function handleStop(repoId: string, serviceId: string) {
@@ -99,12 +98,12 @@ export default function RepoList() {
     } catch {
       // Continue with normal refresh handling for a managed-service stop.
     }
-    await Promise.all([fetchRepos(), fetchTailscale()])
+    await handleStatusRefresh(repoId, serviceId)
   }
 
   async function handleRestart(repoId: string, serviceId: string) {
     await client.restartService(repoId, serviceId)
-    await Promise.all([fetchRepos(), fetchTailscale()])
+    await handleStatusRefresh(repoId, serviceId)
   }
 
   async function handleUpdate(repoId: string, serviceId: string) {
@@ -112,13 +111,58 @@ export default function RepoList() {
       installMode: "auto",
       restartMode: "auto",
     })
-    await Promise.all([fetchRepos(), fetchTailscale()])
+    await handleStatusRefresh(repoId, serviceId)
   }
 
   async function handleTailnetToggle(serviceId: string, enabled: boolean) {
     if (enabled) await client.enableTailscaleService(serviceId)
     else await client.disableTailscaleService(serviceId)
     await Promise.all([fetchRepos(), fetchTailscale()])
+  }
+
+  async function handleStatusRefresh(repoId: string, serviceId: string) {
+    setRefreshingServices((current) => new Set(current).add(serviceId))
+    try {
+      const response = await client.refreshServiceStatus(repoId, serviceId)
+      setRepos((current) => current?.map((repo) => repo.id === repoId ? {
+        ...repo,
+        services: repo.services.map((service) => service.id === serviceId ? response.service : service),
+      } : repo) ?? null)
+      setTailscaleStatus(response.tailscale)
+      if (response.result.error) throw new Error(response.result.error)
+    } finally {
+      setRefreshingServices((current) => {
+        const next = new Set(current)
+        next.delete(serviceId)
+        return next
+      })
+    }
+  }
+
+  async function handleGlobalRefresh() {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    setRefreshFeedback({ message: "Refreshing all service statuses…", error: false })
+    try {
+      const response = await client.refreshAllStatus()
+      setRepos(response.repos)
+      setTailscaleStatus(response.tailscale)
+      setError(null)
+      const failures = response.services.filter((service) => service.error)
+      setRefreshFeedback({
+        message: failures.length > 0
+          ? `Refresh completed with ${failures.length} service check error${failures.length === 1 ? "" : "s"}`
+          : `Status refresh completed at ${new Date(response.checkedAt).toLocaleTimeString()}`,
+        error: failures.length > 0,
+      })
+    } catch (err) {
+      setRefreshFeedback({
+        message: err instanceof Error ? err.message : "Status refresh failed",
+        error: true,
+      })
+    } finally {
+      setIsRefreshing(false)
+    }
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -186,14 +230,14 @@ export default function RepoList() {
           </div>
           <div className={styles.metric} data-state="attention">
             <ShieldAlert aria-hidden="true" size={18} strokeWidth={2.2} />
-            <span className={styles.metricValue}>{summary.failed + summary.starting + summary.recovering + summary.stopping}</span>
+            <span className={styles.metricValue}>{summary.attention}</span>
             <span className={styles.metricLabel}>Attention</span>
           </div>
           <button
             className={styles.refreshBtn}
             type="button"
             onClick={() => {
-              void Promise.all([fetchRepos(true), fetchTailscale()])
+              void handleGlobalRefresh()
             }}
             disabled={isRefreshing}
             aria-label="Refresh service status"
@@ -208,6 +252,15 @@ export default function RepoList() {
           </button>
         </div>
       </section>
+      {refreshFeedback && (
+        <div
+          className={refreshFeedback.error ? styles.refreshError : styles.refreshFeedback}
+          role={refreshFeedback.error ? "alert" : "status"}
+          aria-live="polite"
+        >
+          {refreshFeedback.message}
+        </div>
+      )}
 
       <div className={styles.grid}>
         {repos.map((repo, index) => {
@@ -245,6 +298,8 @@ export default function RepoList() {
                     onStop={handleStop}
                     onRestart={handleRestart}
                     onUpdate={handleUpdate}
+                    onRefreshStatus={handleStatusRefresh}
+                    isStatusRefreshing={isRefreshing || refreshingServices.has(service.id)}
                     tailnetStatus={tailnetByService.get(service.id) ?? null}
                     onTailnetToggle={handleTailnetToggle}
                   />
@@ -263,11 +318,22 @@ function getSummary(repos: RepoSummary[]) {
     (acc, repo) => {
       for (const service of repo.services) {
         acc.total += 1
-        acc[service.lifecycle.state] += 1
+        const state = effectiveLifecycleState(service)
+        acc[state] += 1
+        if (
+          (service.observedStatus.availability.state === "healthy" && (
+            service.observedStatus.management.state === "control_lost"
+            || service.observedStatus.management.state === "unmanaged"
+          ))
+          || state === "failed"
+          || state === "starting"
+          || state === "recovering"
+          || state === "stopping"
+        ) acc.attention += 1
       }
       return acc
     },
-    { total: 0, running: 0, starting: 0, recovering: 0, stopping: 0, stopped: 0, failed: 0 },
+    { total: 0, attention: 0, running: 0, starting: 0, recovering: 0, stopping: 0, stopped: 0, failed: 0 },
   )
   return counts
 }
@@ -275,9 +341,15 @@ function getSummary(repos: RepoSummary[]) {
 function countStates(repo: RepoSummary): Record<LifecycleState, number> {
   return repo.services.reduce(
     (acc, service) => {
-      acc[service.lifecycle.state] += 1
+      acc[effectiveLifecycleState(service)] += 1
       return acc
     },
     { running: 0, starting: 0, recovering: 0, stopping: 0, stopped: 0, failed: 0 },
   )
+}
+
+function effectiveLifecycleState(service: RepoSummary["services"][number]): LifecycleState {
+  const lifecycle = service.lifecycle.state
+  if (lifecycle === "starting" || lifecycle === "recovering" || lifecycle === "stopping") return lifecycle
+  return service.observedStatus.availability.state === "healthy" ? "running" : lifecycle
 }

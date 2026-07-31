@@ -1,7 +1,7 @@
 import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 import { readFile, writeFile, appendFile, mkdir, access } from "node:fs/promises"
-import type { LifecycleRunReport, RunReport } from "../types"
+import type { LifecycleRunReport, RunReport, StatusObservationReport } from "../types"
 
 const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
 const LOG_DIR = join(_dir, "..", "..", "data", "logs")
@@ -13,6 +13,10 @@ function todayStr(): string {
 
 function runLogPath(date: string): string {
   return join(LOG_DIR, `runs-${date}.ndjson`)
+}
+
+function statusObservationLogPath(date: string): string {
+  return join(LOG_DIR, `status-observations-${date}.ndjson`)
 }
 
 async function ensureLogDir(): Promise<void> {
@@ -40,6 +44,11 @@ export async function logLifecycleRun(report: LifecycleRunReport): Promise<void>
   const line = JSON.stringify(report) + "\n"
   const path = runLogPath(todayStr())
   await appendFile(path, line, "utf-8")
+}
+
+export async function logStatusObservation(report: StatusObservationReport): Promise<void> {
+  await ensureLogDir()
+  await appendFile(statusObservationLogPath(todayStr()), JSON.stringify(report) + "\n", "utf-8")
 }
 
 export async function readRecentLogs(serviceId: string, n = 20): Promise<Array<RunReport | LifecycleRunReport>> {
@@ -83,7 +92,7 @@ export async function rotateOldLogs(): Promise<void> {
   }
 
   for (const file of files) {
-    const match = file.match(/^(?:runs|requests)-(\d{4}-\d{2}-\d{2})\.ndjson$/)
+    const match = file.match(/^(?:runs|requests|status-observations)-(\d{4}-\d{2}-\d{2})\.ndjson$/)
     if (!match) continue
     const fileDate = new Date(match[1])
     if (fileDate < cutoff) {

@@ -1,7 +1,6 @@
 import Elysia, { t } from "elysia"
 import { getAllServices, requireService } from "../config"
-import { checkHealth } from "../services/healthCheck"
-import { processManager } from "../services/processManager"
+import { statusCoordinator } from "../services/statusCoordinator"
 import { setTailscaleServiceEnabled } from "../services/configEditor"
 import {
   checkTailscaleService,
@@ -15,16 +14,14 @@ import {
   TailscaleUnavailableError,
   type TailscaleExecutor,
 } from "../services/tailscale"
-import type { LifecycleState, ServiceConfig } from "../types"
+import type { ServiceConfig } from "../types"
 
-async function localServiceState(service: ServiceConfig): Promise<LifecycleState> {
-  const process = await processManager.observe(service)
-  if (process) return process.lifecycleState
-  return (await checkHealth(service)).status === "pass" ? "running" : "stopped"
+function localServiceRunning(service: ServiceConfig): boolean {
+  return statusCoordinator.getObservation(service).availability.state === "healthy"
 }
 
 async function isLocalServiceRunning(service: ServiceConfig): Promise<boolean> {
-  return await localServiceState(service) === "running"
+  return localServiceRunning(service)
 }
 
 export function createTailscaleRoute(executor: TailscaleExecutor = tailscaleExecutor) {
@@ -45,7 +42,6 @@ export function createTailscaleRoute(executor: TailscaleExecutor = tailscaleExec
         }
 
         const configured = getAllServices()
-        const localStates = await Promise.all(configured.map(({ service }) => localServiceState(service)))
         return {
           machine: {
             state: machine.state,
@@ -54,8 +50,8 @@ export function createTailscaleRoute(executor: TailscaleExecutor = tailscaleExec
             tags: machine.tags,
             error: machine.error,
           },
-          services: configured.map(({ service }, index) =>
-            checkTailscaleService(service, localStates[index], machine, serveConfig, serveConfigAvailable)
+          services: configured.map(({ service }) =>
+            checkTailscaleService(service, localServiceRunning(service), machine, serveConfig, serveConfigAvailable)
           ),
         }
       },

@@ -100,10 +100,15 @@
 }
 
 .pid,
-.uptime {
+.uptime,
+.checked {
   font-size: 0.76rem;
   font-weight: 650;
   color: #92a5bd;
+}
+
+.checked {
+  color: #7dd3fc;
 }
 
 .stackInfo {
@@ -190,6 +195,31 @@
   padding: 8px 10px;
 }
 
+.attention,
+.checking {
+  grid-column: 2 / 4;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.attention span {
+  color: #d8cba3;
+}
+
+.checking {
+  color: #bae6fd;
+  background: rgba(14, 165, 233, 0.1);
+  border-color: rgba(14, 165, 233, 0.24);
+}
+
 .controls {
   display: flex;
   justify-content: flex-end;
@@ -238,7 +268,9 @@
   }
 
   .tailnet,
-  .message {
+  .message,
+  .attention,
+  .checking {
     grid-column: 2;
   }
 }

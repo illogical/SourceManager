@@ -8,6 +8,7 @@ import { reposRoute } from "./routes/repos"
 import { updateRoute } from "./routes/update"
 import { configRoute } from "./routes/config"
 import { tailscaleRoute } from "./routes/tailscale"
+import { statusRoute } from "./routes/status"
 import { processManager } from "./services/processManager"
 import { rotateOldLogs } from "./services/runLogger"
 import { RepoNotFoundError, ServiceNotFoundError } from "./config"
@@ -23,6 +24,7 @@ import {
   configureApplicationLifecycle,
   requestApplicationShutdown,
 } from "./services/applicationLifecycle"
+import { statusCoordinator } from "./services/statusCoordinator"
 
 // ── Startup ────────────────────────────────────────────────────────────────
 
@@ -127,6 +129,7 @@ const app = new Elysia()
       .use(updateRoute)
       .use(configRoute)
       .use(tailscaleRoute)
+      .use(statusRoute)
   )
 
   // Error handling
@@ -196,4 +199,6 @@ void processManager.reconcileStartup(managedRepos, {
   )
 }).catch((err) => {
   console.warn(`[SourceManager] Startup reconciliation failed: ${(err as Error).message}`)
+}).finally(() => {
+  statusCoordinator.startScheduledMonitoring()
 })

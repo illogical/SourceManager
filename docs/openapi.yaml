@@ -190,6 +190,43 @@ components:
         recoveryReason:
           type: [string, 'null']
 
+    ObservedServiceStatus:
+      type: object
+      required: [availability, management, checkedAt, healthDurationMs, healthError, listenerPid, runnerPid, runnerHeartbeatAt, diagnosticCode, message]
+      properties:
+        availability:
+          type: object
+          required: [state]
+          properties:
+            state:
+              type: string
+              enum: [healthy, unhealthy, unknown]
+        management:
+          type: object
+          required: [state]
+          properties:
+            state:
+              type: string
+              enum: [managed, control_lost, unmanaged, not_applicable]
+        checkedAt:
+          type: string
+          format: date-time
+        healthDurationMs:
+          type: [integer, 'null']
+        healthError:
+          type: [string, 'null']
+        listenerPid:
+          type: [integer, 'null']
+        runnerPid:
+          type: [integer, 'null']
+        runnerHeartbeatAt:
+          type: [string, 'null']
+          format: date-time
+        diagnosticCode:
+          type: [string, 'null']
+        message:
+          type: [string, 'null']
+
     TailnetInfo:
       type: object
       required: [hostname, domain]
@@ -309,7 +346,7 @@ components:
 
     ServiceSummary:
       type: object
-      required: [id, displayName, port, healthUrl, healthMode, packageManager, scriptName, tags, allowedIps, lifecycle]
+      required: [id, displayName, port, healthUrl, healthMode, packageManager, scriptName, tags, allowedIps, lifecycle, observedStatus]
       properties:
         id:
           type: string
@@ -356,6 +393,8 @@ components:
             - type: 'null'
         lifecycle:
           $ref: '#/components/schemas/ServiceLifecycle'
+        observedStatus:
+          $ref: '#/components/schemas/ObservedServiceStatus'
 
     RepoSummary:
       type: object
@@ -718,6 +757,27 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /v1/repos/{repoId}/services/{serviceId}/status/refresh:
+    post:
+      operationId: refreshServiceStatus
+      summary: Refresh one service status
+      description: Checks health, listener ownership, signed runner identity, heartbeat, and current Tailnet state without adopting or terminating unverified processes.
+      tags: [Lifecycle]
+      parameters:
+        - { name: repoId, in: path, required: true, schema: { type: string } }
+        - { name: serviceId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Targeted observation, updated service summary, and Tailnet snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /v1/repos/{repoId}/services/{serviceId}/start:
     post:
       operationId: startService
@@ -858,6 +918,22 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /v1/status/refresh:
+    post:
+      operationId: refreshAllServiceStatus
+      summary: Refresh all service status
+      description: Runs bounded, coalesced service and Tailnet observations and returns updated cached repository summaries with partial per-service failures.
+      tags: [Lifecycle]
+      responses:
+        '200':
+          description: Global observation result with repositories, service outcomes, timestamps, and Tailnet state.
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /v1/tailscale/status:
     get:

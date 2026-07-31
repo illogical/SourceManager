@@ -1,4 +1,4 @@
-import { render, screen, act, within } from "@testing-library/react"
+import { render, screen, act, fireEvent, within } from "@testing-library/react"
 import { vi, beforeEach } from "vitest"
 import RepoList from "../components/RepoList"
 import * as client from "../api/client"
@@ -22,6 +22,18 @@ function makeRepo(id: string): RepoSummary {
         tags: [],
         allowedIps: [],
         lifecycle: { state: "stopped", pid: null, startedAt: null, readySince: null, uptimeMs: null, command: null, lastError: null },
+        observedStatus: {
+          availability: { state: "unhealthy" },
+          management: { state: "unmanaged" },
+          checkedAt: new Date(0).toISOString(),
+          healthDurationMs: 1,
+          healthError: "not running",
+          listenerPid: null,
+          runnerPid: null,
+          runnerHeartbeatAt: null,
+          diagnosticCode: null,
+          message: null,
+        },
         tailnet: null,
       },
     ],
@@ -124,5 +136,35 @@ describe("RepoList", () => {
     expect(spy).toHaveBeenCalledTimes(2)
 
     vi.useRealTimers()
+  })
+
+  it("shows global refresh progress and completion feedback", async () => {
+    const repo = makeRepo("refresh")
+    vi.spyOn(client, "listRepos").mockResolvedValue({ repos: [repo] })
+    vi.spyOn(client, "getTailscaleStatus").mockRejectedValue(new Error("not loaded"))
+    let resolveRefresh!: (value: Awaited<ReturnType<typeof client.refreshAllStatus>>) => void
+    vi.spyOn(client, "refreshAllStatus").mockReturnValue(new Promise((resolve) => { resolveRefresh = resolve }))
+
+    await act(async () => { render(<RepoList />) })
+    fireEvent.click(screen.getByRole("button", { name: "Refresh service status" }))
+
+    expect(screen.getByRole("button", { name: "Refresh service status" })).toBeDisabled()
+    expect(screen.getByText("Refreshing all service statuses…")).toBeInTheDocument()
+
+    await act(async () => {
+      resolveRefresh({
+        repos: [repo],
+        services: [],
+        checkedAt: new Date().toISOString(),
+        durationMs: 4,
+        tailscale: {
+          machine: { state: "connected", backendState: "Running", tailnetDomain: null, tags: [], error: null },
+          services: [],
+        },
+      })
+    })
+
+    expect(screen.getByText(/Status refresh completed at/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Refresh service status" })).not.toBeDisabled()
   })
 })

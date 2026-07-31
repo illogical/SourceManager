@@ -83,9 +83,13 @@ describe("runner protocol", () => {
 
     const status = JSON.parse(await readFile(manifest.statusPath, "utf8")) as RunnerStatus
     const output = await readFile(join(logDirectory, "output-0001.log"), "utf8")
+    const runnerEvents = await readFile(join(logDirectory, "runner-events.ndjson"), "utf8")
     expect(status.state).toBe("exited")
     expect(verifyRunnerStatus(status, manifest.controlToken)).toBe(true)
     expect(output).toContain("fixture stdout")
     expect(output).toContain("fixture stderr")
+    expect(runnerEvents).toContain('"event":"runner_started"')
+    expect(runnerEvents).toContain('"event":"runner_exit"')
+    expect(runnerEvents).not.toContain(manifest.controlToken)
   })
 })

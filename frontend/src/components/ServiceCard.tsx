@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Play, RefreshCw, RotateCcw, Square, Terminal } from "lucide-react"
+import { Download, Play, RefreshCw, RotateCcw, Square, Terminal } from "lucide-react"
 import type { ServiceSummary, TailscaleServiceCheck } from "../api/types"
 import LifecycleBadge from "./LifecycleBadge"
 import ActionButton from "./ActionButton"
@@ -13,6 +13,8 @@ interface Props {
   onStop: (repoId: string, serviceId: string) => Promise<void>
   onRestart: (repoId: string, serviceId: string) => Promise<void>
   onUpdate: (repoId: string, serviceId: string) => Promise<void>
+  onRefreshStatus?: (repoId: string, serviceId: string) => Promise<void>
+  isStatusRefreshing?: boolean
   tailnetStatus?: TailscaleServiceCheck | null
   onTailnetToggle?: (serviceId: string, enabled: boolean) => Promise<void>
 }
@@ -24,6 +26,8 @@ export default function ServiceCard({
   onStop,
   onRestart,
   onUpdate,
+  onRefreshStatus = async () => {},
+  isStatusRefreshing = false,
   tailnetStatus = null,
   onTailnetToggle = async () => {},
 }: Props) {
@@ -31,8 +35,16 @@ export default function ServiceCard({
   const [actionError, setActionError] = useState<string | null>(null)
 
   const { lifecycle, tailnet } = service
-  const state = lifecycle.state
-  const isPending = pendingAction !== null
+  const observed = service.observedStatus
+  const healthy = observed.availability.state === "healthy"
+  const state = lifecycle.state === "starting" || lifecycle.state === "recovering" || lifecycle.state === "stopping"
+    ? lifecycle.state
+    : healthy ? "running" : lifecycle.state
+  const managementAttention = healthy && (
+    observed.management.state === "control_lost" || observed.management.state === "unmanaged"
+  )
+  const canControl = observed.management.state === "managed" || observed.management.state === "not_applicable"
+  const isPending = pendingAction !== null || isStatusRefreshing
   const isRunning = state === "running" || state === "starting" || state === "recovering"
   const isStopping = state === "stopping"
 
@@ -52,13 +64,15 @@ export default function ServiceCard({
     lifecycle.state === "running" && lifecycle.uptimeMs != null
       ? formatUptime(lifecycle.uptimeMs)
       : null
-  const toggleLabel = state === "recovering"
+  const toggleLabel = !canControl && healthy
+    ? "Management control unavailable"
+    : state === "recovering"
     ? "Stop recovering service"
     : isRunning || isStopping ? "Stop service" : "Start service"
   const toggleIcon = isRunning || isStopping ? Square : Play
   const toggleVariant = isRunning || isStopping ? "stop" : "start"
-  const canRestart = state === "running"
-  const canUpdate = state !== "starting" && state !== "stopping"
+  const canRestart = state === "running" && canControl
+  const canUpdate = state !== "starting" && state !== "stopping" && canControl
   const effectiveTailnetStatus: TailscaleServiceCheck | null = tailnetStatus ?? (tailnet ? {
     serviceId: service.id,
     configured: true,
@@ -99,9 +113,14 @@ export default function ServiceCard({
             <span className={styles.port}>:{service.port}</span>
           </div>
           <div className={styles.metaRow}>
-            <LifecycleBadge state={state} />
+          <LifecycleBadge state={state} />
             {uptimeSummary && <span className={styles.uptime}>{uptimeSummary}</span>}
-            {lifecycle.pid && <span className={styles.pid}>PID {lifecycle.pid}</span>}
+            {(observed.listenerPid ?? lifecycle.pid) && (
+              <span className={styles.pid}>PID {observed.listenerPid ?? lifecycle.pid}</span>
+            )}
+            {observed.checkedAt !== new Date(0).toISOString() && (
+              <span className={styles.checked}>{formatCheckedAt(observed.checkedAt)}</span>
+            )}
           </div>
         </div>
 
@@ -127,9 +146,16 @@ export default function ServiceCard({
           label={toggleLabel}
           icon={toggleIcon}
           variant={toggleVariant}
-          disabled={isPending || isStopping}
+          disabled={isPending || isStopping || (!canControl && healthy)}
           loading={pendingAction === "start" || pendingAction === "stop" || isStopping}
           onClick={handleToggle}
+        />
+        <ActionButton
+          label="Refresh status"
+          icon={RefreshCw}
+          disabled={isPending || isStopping}
+          loading={pendingAction === "status-refresh" || isStatusRefreshing}
+          onClick={() => run("status-refresh", () => onRefreshStatus(repoId, service.id))}
         />
         <ActionButton
           label="Restart service"
@@ -140,7 +166,7 @@ export default function ServiceCard({
         />
         <ActionButton
           label="Update service"
-          icon={RefreshCw}
+          icon={Download}
           disabled={isPending || !canUpdate}
           loading={pendingAction === "update"}
           onClick={() => run("update", () => onUpdate(repoId, service.id))}
@@ -158,7 +184,16 @@ export default function ServiceCard({
         />
       )}
 
-      {(state === "failed" && lifecycle.lastError) || actionError ? (
+      {isStatusRefreshing && (
+        <div className={styles.checking} role="status" aria-live="polite">Checking service status…</div>
+      )}
+      {managementAttention && (
+        <div className={styles.attention} role="status">
+          <strong>{observed.management.state === "control_lost" ? "Control lost" : "Unmanaged service"}</strong>
+          <span>{observed.message}</span>
+        </div>
+      )}
+      {((state === "failed" && !healthy && lifecycle.lastError) || actionError) ? (
         <div className={styles.message} role="alert">
           {actionError ?? lifecycle.lastError}
         </div>
@@ -179,4 +214,10 @@ function formatUptime(ms: number): string {
   if (m < 60) return `${m}m`
   const h = Math.floor(m / 60)
   return `${h}h ${m % 60}m`
+}
+
+function formatCheckedAt(value: string): string {
+  const elapsedMs = Date.now() - new Date(value).getTime()
+  if (Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs < 60_000) return "Checked just now"
+  return `Checked ${new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}`
 }

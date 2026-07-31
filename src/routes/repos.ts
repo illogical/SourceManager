@@ -12,6 +12,7 @@ import {
 import type { LifecycleState, ServiceConfig } from "../types"
 import { scheduleApplicationShutdown } from "../services/applicationLifecycle"
 import { getApplicationState } from "../services/applicationState"
+import { statusCoordinator } from "../services/statusCoordinator"
 
 interface ServiceLifecycle {
   state: LifecycleState
@@ -44,20 +45,21 @@ async function buildLifecycle(service: ServiceConfig): Promise<ServiceLifecycle>
       recoveryReason: null,
     }
   }
-  const state = await processManager.observe(service)
+  const state = processManager.getProcess(service.id)
   if (!state) {
-    const health = await checkHealth(service)
+    const observed = statusCoordinator.getObservation(service)
+    const healthy = observed.availability.state === "healthy"
     return {
-      state: health.status === "pass" ? "failed" : "stopped",
+      state: healthy ? "failed" : "stopped",
       pid: null,
       startedAt: null,
-      readySince: health.status === "pass" ? new Date().toISOString() : null,
+      readySince: healthy ? observed.checkedAt : null,
       uptimeMs: null,
       command: null,
-      lastError: health.status === "pass"
+      lastError: healthy
         ? "A healthy listener exists, but SourceManager cannot verify that it owns the process"
         : null,
-      diagnosticCode: health.status === "pass" ? "SERVICE_PROCESS_OWNERSHIP_CONFLICT" : null,
+      diagnosticCode: healthy ? "SERVICE_PROCESS_OWNERSHIP_CONFLICT" : null,
       intendedState: "stopped",
       recoveryAttempt: null,
       recoveryReason: null,
@@ -81,7 +83,7 @@ async function buildLifecycle(service: ServiceConfig): Promise<ServiceLifecycle>
   }
 }
 
-function buildServiceSummary(service: ServiceConfig, lifecycle: ServiceLifecycle) {
+export function buildServiceSummary(service: ServiceConfig, lifecycle: ServiceLifecycle) {
   return {
     id: service.id,
     displayName: service.displayName,
@@ -94,7 +96,23 @@ function buildServiceSummary(service: ServiceConfig, lifecycle: ServiceLifecycle
     tags: service.tags,
     allowedIps: service.allowedIps,
     lifecycle,
+    observedStatus: statusCoordinator.getObservation(service),
     tailnet: buildTailnet(service),
+  }
+}
+
+export async function buildReposResponse() {
+  const config = getConfig()
+  return {
+    repos: await Promise.all(config.repos.map(async (repo) => ({
+      id: repo.id,
+      displayName: repo.displayName,
+      repoPath: repo.repoPath,
+      defaultBranch: repo.defaultBranch,
+      services: await Promise.all(repo.services.map(async (service) => (
+        buildServiceSummary(service, await buildLifecycle(service))
+      ))),
+    }))),
   }
 }
 
@@ -120,20 +138,32 @@ export const reposRoute = new Elysia({ prefix: "/repos" })
   // GET /repos
   .get(
     "/",
-    async () => {
-      const config = getConfig()
-      const repos = await Promise.all(config.repos.map(async (repo) => ({
-        id: repo.id,
-        displayName: repo.displayName,
-        repoPath: repo.repoPath,
-        defaultBranch: repo.defaultBranch,
-        services: await Promise.all(repo.services.map(async (service) => (
-          buildServiceSummary(service, await buildLifecycle(service))
-        ))),
-      })))
-      return { repos }
-    },
+    () => buildReposResponse(),
     { detail: { summary: "List all repos and services", tags: ["Repos"] } }
+  )
+
+  .post(
+    "/:repoId/services/:serviceId/status/refresh",
+    async ({ params }) => {
+      const repo = requireRepo(params.repoId)
+      const { service } = requireService(params.serviceId)
+      if (!repo.services.some((candidate) => candidate.id === service.id)) {
+        throw new Error(`Service "${service.id}" not found in repo "${repo.id}"`)
+      }
+      const result = await statusCoordinator.refreshService(repo.id, service, "manual_service")
+      const tailscale = await statusCoordinator.refreshTailscale()
+      return {
+        checkedAt: result.status.checkedAt,
+        durationMs: result.durationMs,
+        result,
+        service: buildServiceSummary(service, await buildLifecycle(service)),
+        tailscale,
+      }
+    },
+    {
+      params: t.Object({ repoId: t.String(), serviceId: t.String() }),
+      detail: { summary: "Refresh one service status", tags: ["Lifecycle"] },
+    },
   )
 
   // GET /repos/:repoId
