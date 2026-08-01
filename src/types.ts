@@ -1,232 +1,113 @@
-// ── Server config ─────────────────────────────────────────────────────────────
+import type { HostedModuleStatus } from "./host/contract"
+
+export type RealtimeProtocol = "websocket" | "socket.io"
 
 export interface ServerConfig {
   port: number
-  frontendPort?: number
   token: string
   allowedIps: string[]
 }
 
-export interface ProjectsFileServerConfig {
-  frontendPort?: number
-  allowedIps?: string[]
-  /** @deprecated Configure SOURCEMANAGER_PORT in .env instead. */
-  port?: number
-  /** @deprecated Configure SOURCEMANAGER_TOKEN in .env instead. */
-  token?: string
-}
-
-// ── Service config (one runnable process) ─────────────────────────────────────
-
-export interface ServiceConfig {
-  id: string
-  displayName: string
-  packageManager: "auto" | "bun" | "npm" | "yarn" | "pnpm"
-  scriptName: string
+export interface TailnetConfig {
+  serviceName: string
+  enabled: boolean
+  protocol: "https"
   port: number
-  healthUrl: string
-  healthMode: "ping" | "full"
-  tags: string[]
-  installCommand?: string | null
-  allowedIps: string[]
-  // Tailnet metadata — optional; validated in SO-2 but not acted on until SO-6
-  tailnetHostname?: string
-  tailnetDomain?: string
-  tailscaleServeEnabled?: boolean
-  tailscaleServeMode?: "https"
-  tailscaleServeTarget?: string
-  // SO-6C named Tailscale Service configuration
-  tailnetExposureMode?: "tailscale-service"
-  tailscaleServiceName?: string
-  tailscaleServiceEnabled?: boolean
-  tailscaleServiceProtocol?: "https"
-  tailscaleServicePort?: number
-  tailscaleServiceTarget?: string
+  target: string
 }
 
-// ── Repo config (groups one or more services sharing a repository) ─────────────
+export interface HostModuleConfig {
+  module: string
+  exportName?: string
+  contractVersion: 1
+}
 
-export interface RepoConfig {
+export interface WebMountConfig {
+  mountPath: string
+  distPath: string
+  spaFallback: boolean
+}
+
+export interface ApiMountConfig {
+  mountPath: string
+}
+
+export interface RealtimeMountConfig {
+  mountPath: string
+  protocol: RealtimeProtocol
+}
+
+export interface BuildConfig {
+  script: string
+  verifyScript: string
+}
+
+export interface ProjectConfig {
   id: string
   displayName: string
   repoPath: string
   defaultBranch: string
-  services: ServiceConfig[]
-}
-
-// ── App config ────────────────────────────────────────────────────────────────
-
-export interface AppConfig {
-  workspacePath: string
-  server: ServerConfig
-  repos: RepoConfig[]
+  enabled: boolean
+  host: HostModuleConfig
+  web?: WebMountConfig
+  api?: ApiMountConfig
+  realtime?: RealtimeMountConfig
+  build: BuildConfig
+  tags: string[]
+  compatibility?: {
+    lowercaseAlias?: boolean
+    lmapiV1Alias?: boolean
+  }
 }
 
 export interface ProjectsFileConfig {
-  server: ProjectsFileServerConfig
-  repos: RepoConfig[]
+  schemaVersion: 2
+  server: { allowedIps: string[] }
+  tailnet: TailnetConfig
+  projects: ProjectConfig[]
+}
+
+export interface AppConfig extends ProjectsFileConfig {
+  workspacePath: string
+  server: ServerConfig
+}
+
+export interface BuildManifest {
+  contractVersion: 1
+  projectId: string
+  commit: string
+  builtAt: string
+  nodeMajor: number
+}
+
+export type HostState = "loading" | "ready" | "degraded" | "unavailable" | "disabled"
+export type BuildState = "current" | "stale" | "missing" | "invalid"
+export type WorkingTreeState = "clean" | "dirty" | "unknown"
+
+export interface ProjectRuntimeStatus {
+  id: string
+  displayName: string
+  repoPath: string
+  defaultBranch: string
+  enabled: boolean
+  tags: string[]
+  capabilities: Array<"web" | "api" | "realtime">
+  links: { web?: string; api?: string; realtime?: string }
+  hostState: HostState
+  loadedCommit: string | null
+  checkedOutCommit: string | null
+  branch: string | null
+  buildState: BuildState
+  workingTree: WorkingTreeState
+  lastLoadedAt: string | null
+  lastError: string | null
+  moduleStatus: HostedModuleStatus | null
 }
 
 export interface RuntimeConfigSummary {
   port: number
   workspacePath: string
   tokenConfigured: boolean
-}
-
-// ── Lifecycle state machine ───────────────────────────────────────────────────
-
-export type LifecycleState = "starting" | "running" | "stopping" | "stopped" | "failed"
-
-export interface ServiceProcessState {
-  serviceId: string
-  repoId: string
-  pid: number
-  port: number
-  startedAt: string    // ISO 8601
-  command: string
-  lifecycleState: LifecycleState
-  readySince?: string  // ISO 8601; set when health first passes after start
-  lastError?: string   // set when lifecycleState is "failed"
-}
-
-// ── Port map entry ────────────────────────────────────────────────────────────
-
-export interface PortEntry {
-  port: number
-  serviceId: string
-  pid: number
-  status: "running" | "stopped"
-}
-
-// ── Health check ──────────────────────────────────────────────────────────────
-
-export type HealthCheckResult =
-  | { status: "pass"; durationMs: number; detail?: string }
-  | { status: "fail"; durationMs: number; detail?: string }
-
-// ── Minimal interface accepted by checkHealth ─────────────────────────────────
-
-export interface HealthCheckable {
-  healthUrl: string
-  healthMode: "ping" | "full"
-}
-
-// ── Run/update types ──────────────────────────────────────────────────────────
-
-export type StepStatus = "pending" | "success" | "failure" | "skipped"
-
-export interface StepResult {
-  step: string
-  status: StepStatus
-  message: string
-  durationMs: number
-}
-
-export interface InstallRunResult {
-  status: StepStatus
-  reason: string
-  durationMs?: number
-}
-
-export interface RestartRunResult {
-  status: StepStatus
-  reason: string
-  durationMs?: number
-}
-
-export interface RunReport {
-  runId: string
-  serviceId: string
-  repoId: string
-  startedAt: string
-  durationMs: number
-  branch: string
-  dryRun: boolean
-  updated: boolean
-  reason: string
-  installRun: InstallRunResult
-  restartRun: RestartRunResult
-  healthStatus: "pass" | "fail" | "skipped"
-  steps: StepResult[]
-}
-
-export interface LifecycleRunReport {
-  kind: "lifecycle"
-  action: "start" | "stop" | "restart"
-  runId: string
-  serviceId: string
-  repoId: string
-  startedAt: string
-  durationMs: number
-  status: "success" | "failure" | "skipped"
-  reason: string
-  steps: StepResult[]
-  diagnostics?: Record<string, unknown>
-}
-
-export type InstallMode = "auto" | "always" | "never"
-export type RestartMode = "auto" | "always" | "never"
-
-export interface UpdateRequest {
-  branch?: string
-  installMode?: InstallMode
-  restartMode?: RestartMode
-  dryRun?: boolean
-  background?: boolean
-}
-
-export interface UpdateAccepted {
-  runId: string
-  serviceId: string
-  repoId: string
-  startedAt: string
-  branch: string
-  status: "accepted"
-  message: string
-}
-
-// ── Config edit types ─────────────────────────────────────────────────────────
-
-export interface EditableServerConfig {
-  frontendPort: number
-  allowedIps: string[]
-}
-
-export interface EditableServiceConfig {
-  id: string
-  displayName: string
-  packageManager: "auto" | "bun" | "npm" | "yarn" | "pnpm"
-  scriptName: string
-  installCommand: string | null
-  port: number
-  healthUrl: string
-  healthMode: "ping" | "full"
-  tags: string[]
-  allowedIps: string[]
-  tailnetHostname?: string
-  tailnetDomain?: string
-  tailscaleServeEnabled?: boolean
-  tailscaleServeMode?: "https"
-  tailscaleServeTarget?: string
-  tailnetExposureMode?: "tailscale-service"
-  tailscaleServiceName?: string
-  tailscaleServiceEnabled?: boolean
-  tailscaleServiceProtocol?: "https"
-  tailscaleServicePort?: number
-  tailscaleServiceTarget?: string
-}
-
-export interface EditableRepoConfig {
-  id: string
-  displayName: string
-  repoPath: string
-  defaultBranch: string
-  services: EditableServiceConfig[]
-}
-
-export interface EditableConfig {
-  server: EditableServerConfig
-  repos: EditableRepoConfig[]
 }
 
 export interface ValidationFieldError {
@@ -249,6 +130,12 @@ export interface ConfigDiffEntry {
 export interface ConfigDiff {
   changes: ConfigDiffEntry[]
   changeCount: number
+}
+
+export interface V1ConversionPreview {
+  config: ProjectsFileConfig
+  warnings: string[]
+  removedFields: string[]
 }
 
 export class ValidationError extends Error {

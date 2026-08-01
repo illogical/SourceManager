@@ -1,14 +1,7 @@
-import { join } from "path"
+import { appendFile, mkdir } from "node:fs/promises"
+import { join, resolve } from "node:path"
 
-const LOG_DIR = join(import.meta.dir, "..", "..", "data", "logs")
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
-function requestLogPath(): string {
-  return join(LOG_DIR, `requests-${todayStr()}.ndjson`)
-}
+const LOG_DIR = join(resolve(process.env.SOURCEMANAGER_DATA_PATH ?? join(process.cwd(), "data")), "logs")
 
 interface RequestLogEntry {
   timestamp: string
@@ -20,23 +13,13 @@ interface RequestLogEntry {
   ip: string
 }
 
-function redactSensitive(body: unknown): unknown {
-  if (!body || typeof body !== "object") return body
-  const copy = { ...(body as Record<string, unknown>) }
-  for (const key of Object.keys(copy)) {
-    const lower = key.toLowerCase()
-    if (lower.includes("token") || lower.includes("password") || lower.includes("secret")) {
-      copy[key] = "[REDACTED]"
-    }
-  }
-  return copy
+function redact(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redact)
+  if (!value || typeof value !== "object") return value
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, /token|password|secret/i.test(key) ? "[REDACTED]" : redact(item)]))
 }
 
 export async function logRequest(entry: RequestLogEntry): Promise<void> {
-  const safeEntry = { ...entry, body: redactSensitive(entry.body) }
-  const line = JSON.stringify(safeEntry) + "\n"
-  const path = requestLogPath()
-
-  const existing = await Bun.file(path).exists() ? await Bun.file(path).text() : ""
-  await Bun.write(path, existing + line)
+  await mkdir(LOG_DIR, { recursive: true })
+  await appendFile(join(LOG_DIR, `requests-${entry.timestamp.slice(0, 10)}.ndjson`), `${JSON.stringify({ ...entry, body: redact(entry.body) })}\n`, "utf8")
 }

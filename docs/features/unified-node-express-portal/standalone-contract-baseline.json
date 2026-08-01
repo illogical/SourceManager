@@ -1,0 +1,11 @@
+{
+  "capturedAt": "2026-07-31",
+  "source": "gitignored SourceManager v1 configuration plus inspected application route maps",
+  "applications": [
+    { "id": "sourcemanager", "web": "http://127.0.0.1:17106/", "apiHealth": "http://127.0.0.1:17106/health", "realtime": null },
+    { "id": "devplanner", "web": "http://127.0.0.1:5173/", "apiHealth": "http://127.0.0.1:17103/health", "realtime": "ws://127.0.0.1:17103/api/ws" },
+    { "id": "lmapi", "web": "http://127.0.0.1:17100/", "apiHealth": "http://127.0.0.1:17100/health", "realtime": "http://127.0.0.1:17100/socket.io/?EIO=4&transport=polling" },
+    { "id": "memoryapi", "web": "http://127.0.0.1:17107/", "apiHealth": "http://127.0.0.1:17107/", "realtime": null },
+    { "id": "lmeval", "web": "http://127.0.0.1:5177/", "apiHealth": "http://127.0.0.1:3200/api/eval/templates", "realtime": "ws://127.0.0.1:3200/ws" }
+  ]
+}

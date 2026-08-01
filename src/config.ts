@@ -1,146 +1,56 @@
-import { join, dirname, isAbsolute, posix, relative, resolve, sep, win32 } from "path"
-import { fileURLToPath } from "url"
-import { readFileSync } from "fs"
-import type {
-  AppConfig,
-  ProjectsFileConfig,
-  RepoConfig,
-  ServiceConfig,
-} from "./types"
+import { readFileSync } from "node:fs"
+import { dirname, isAbsolute, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+import { z } from "zod"
+import { isIP } from "node:net"
+import type { AppConfig, ProjectConfig, ProjectsFileConfig, V1ConversionPreview } from "./types"
+import { assertUniqueRoutePrefixes } from "./host/routes"
 
-const _dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url))
-export const CONFIG_PATH = join(_dir, "..", "data", "projects.json")
-const EXAMPLE_PATH = "data/projects.example.json"
+const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+export const CONFIG_PATH = process.env.SOURCEMANAGER_CONFIG_PATH
+  ? resolve(process.env.SOURCEMANAGER_CONFIG_PATH)
+  : join(sourceRoot, "data", "projects.json")
+
+const mountPath = z.string().regex(/^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/, "must be an absolute normalized URL path without a trailing slash")
+const relativePath = z.string().min(1).refine((value) => !isAbsolute(value) && !value.split(/[\\/]/).includes(".."), "must be a relative path without traversal")
+const scriptName = z.string().regex(/^[A-Za-z0-9:_-]+$/)
+const ipOrCidr = z.string().refine((value) => {
+  const [address, prefix] = value.split("/")
+  const version = isIP(address)
+  if (!version) return false
+  if (prefix === undefined) return true
+  if (!/^\d+$/.test(prefix)) return false
+  return Number(prefix) >= 0 && Number(prefix) <= (version === 4 ? 32 : 128)
+}, "must be an IP address or valid CIDR")
+const projectSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/),
+  displayName: z.string().min(1),
+  repoPath: relativePath,
+  defaultBranch: z.string().min(1),
+  enabled: z.boolean().default(true),
+  host: z.object({ module: relativePath, exportName: z.string().min(1).optional(), contractVersion: z.literal(1) }),
+  web: z.object({ mountPath, distPath: relativePath, spaFallback: z.boolean() }).optional(),
+  api: z.object({ mountPath }).optional(),
+  realtime: z.object({ mountPath, protocol: z.enum(["websocket", "socket.io"]) }).optional(),
+  build: z.object({ script: scriptName, verifyScript: scriptName }),
+  tags: z.array(z.string().min(1)).default([]),
+  compatibility: z.object({ lowercaseAlias: z.boolean().optional(), lmapiV1Alias: z.boolean().optional() }).optional(),
+})
+
+const fileSchema = z.object({
+  schemaVersion: z.literal(2),
+  server: z.object({ allowedIps: z.array(ipOrCidr).default([]) }).default({ allowedIps: [] }),
+  tailnet: z.object({
+    serviceName: z.string().regex(/^[a-z0-9-]+$/),
+    enabled: z.boolean(),
+    protocol: z.literal("https"),
+    port: z.number().int().min(1).max(65535),
+    target: z.string().url().refine((value) => value.startsWith("http://127.0.0.1:") || value.startsWith("http://localhost:"), "must target the local SourceManager listener"),
+  }),
+  projects: z.array(projectSchema).min(1),
+})
 
 let cachedConfig: AppConfig | null = null
-
-export function loadConfig(): AppConfig {
-  if (cachedConfig) return cachedConfig
-
-  let raw: string
-  try {
-    raw = readFileSync(CONFIG_PATH, "utf-8")
-  } catch {
-    console.error(`\n[SourceManager] ERROR: Config file not found at ${CONFIG_PATH}`)
-    console.error(`  Copy ${EXAMPLE_PATH} to data/projects.json and fill in your values.\n`)
-    process.exit(1)
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch (e) {
-    console.error(`[SourceManager] ERROR: Failed to parse ${CONFIG_PATH}: ${(e as Error).message}`)
-    process.exit(1)
-  }
-
-  // Detect old format and emit a clear migration error
-  const raw_obj = parsed as Record<string, unknown>
-  if (Array.isArray(raw_obj["projects"])) {
-    console.error(`\n[SourceManager] CONFIG ERROR: projects.json uses the old schema (projects[]).`)
-    console.error(`  The new schema uses repos[] with nested services[].`)
-    console.error(`  See ${EXAMPLE_PATH} for the updated format.\n`)
-    process.exit(1)
-  }
-
-  const fileConfig = parsed as ProjectsFileConfig
-  try {
-    const environment = loadEnvironmentConfig()
-    warnAboutLegacyServerFields(fileConfig)
-    const config: AppConfig = {
-      workspacePath: environment.workspacePath,
-      server: {
-        port: environment.port,
-        token: environment.token,
-        frontendPort: fileConfig.server?.frontendPort,
-        allowedIps: fileConfig.server?.allowedIps ?? [],
-      },
-      repos: fileConfig.repos,
-    }
-    validateConfig(config)
-    resolveRepoPaths(config)
-    cachedConfig = config
-    return config
-  } catch (e) {
-    if (e instanceof ConfigError) {
-      console.error(`[SourceManager] CONFIG ERROR: ${e.message}`)
-      process.exit(1)
-    }
-    throw e
-  }
-
-  throw new Error("Unreachable")
-}
-
-export interface EnvironmentConfig {
-  port: number
-  token: string
-  workspacePath: string
-}
-
-export function loadEnvironmentConfig(
-  env: Record<string, string | undefined> = process.env,
-): EnvironmentConfig {
-  const portRaw = env.SOURCEMANAGER_PORT?.trim()
-  if (!portRaw) {
-    throw new ConfigError("SOURCEMANAGER_PORT is required in the environment")
-  }
-  if (!/^\d+$/.test(portRaw)) {
-    throw new ConfigError("SOURCEMANAGER_PORT must be an integer between 1 and 65535")
-  }
-  const port = Number(portRaw)
-  if (port < 1 || port > 65535) {
-    throw new ConfigError("SOURCEMANAGER_PORT must be an integer between 1 and 65535")
-  }
-
-  const token = env.SOURCEMANAGER_TOKEN?.trim()
-  if (!token) {
-    throw new ConfigError("SOURCEMANAGER_TOKEN is required in the environment")
-  }
-
-  const workspacePath = env.SOURCEMANAGER_WORKSPACE_PATH?.trim()
-  if (!workspacePath) {
-    throw new ConfigError("SOURCEMANAGER_WORKSPACE_PATH is required in the environment")
-  }
-  if (!isAbsolute(workspacePath)) {
-    throw new ConfigError("SOURCEMANAGER_WORKSPACE_PATH must be an absolute path")
-  }
-
-  return { port, token, workspacePath: resolve(workspacePath) }
-}
-
-function warnAboutLegacyServerFields(config: ProjectsFileConfig): void {
-  if (config.server && ("port" in config.server || "token" in config.server)) {
-    console.warn(
-      "[SourceManager] CONFIG WARNING: server.port and server.token in projects.json are ignored; configure them in .env instead.",
-    )
-  }
-}
-
-function isCrossPlatformAbsolute(path: string): boolean {
-  return posix.isAbsolute(path) || win32.isAbsolute(path)
-}
-
-function resolvedRepoPath(workspacePath: string, repoPath: string): string {
-  if (isCrossPlatformAbsolute(repoPath)) {
-    abort(`Repo path "${repoPath}" must be relative to SOURCEMANAGER_WORKSPACE_PATH`)
-  }
-  if (repoPath.split(/[\\/]/).includes("..")) {
-    abort(`Repo path "${repoPath}" escapes SOURCEMANAGER_WORKSPACE_PATH`)
-  }
-  const resolvedPath = resolve(workspacePath, repoPath)
-  const fromWorkspace = relative(workspacePath, resolvedPath)
-  if (fromWorkspace === ".." || fromWorkspace.startsWith(`..${sep}`) || isAbsolute(fromWorkspace)) {
-    abort(`Repo path "${repoPath}" escapes SOURCEMANAGER_WORKSPACE_PATH`)
-  }
-  return resolvedPath
-}
-
-export function resolveRepoPaths(config: AppConfig): void {
-  for (const repo of config.repos) {
-    repo.repoPath = resolvedRepoPath(config.workspacePath, repo.repoPath)
-  }
-}
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -149,254 +59,95 @@ export class ConfigError extends Error {
   }
 }
 
-// ── Validation helpers ────────────────────────────────────────────────────────
+export function loadEnvironmentConfig(env: Record<string, string | undefined> = process.env) {
+  const portRaw = env.SOURCEMANAGER_PORT?.trim()
+  if (!portRaw || !/^\d+$/.test(portRaw) || Number(portRaw) < 1 || Number(portRaw) > 65535) {
+    throw new ConfigError("SOURCEMANAGER_PORT must be set to an integer between 1 and 65535")
+  }
+  const token = env.SOURCEMANAGER_TOKEN?.trim()
+  if (!token) throw new ConfigError("SOURCEMANAGER_TOKEN is required in the environment")
+  const workspacePath = env.SOURCEMANAGER_WORKSPACE_PATH?.trim()
+  if (!workspacePath || !isAbsolute(workspacePath)) {
+    throw new ConfigError("SOURCEMANAGER_WORKSPACE_PATH must be an absolute path")
+  }
+  return { port: Number(portRaw), token, workspacePath: resolve(workspacePath) }
+}
 
-const SLUG_RE = /^[a-z0-9-]+$/
-const SCRIPT_RE = /^[a-zA-Z0-9:_-]+$/
-const CIDR_RE = /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/
+export function parseProjectsConfig(value: unknown): ProjectsFileConfig {
+  const result = fileSchema.safeParse(value)
+  if (!result.success) {
+    const details = result.error.issues.map((issue) => `${issue.path.join(".") || "config"}: ${issue.message}`).join("; ")
+    throw new ConfigError(details)
+  }
+  const ids = new Set<string>()
+  for (const project of result.data.projects) {
+    if (ids.has(project.id)) throw new ConfigError(`Duplicate project id: ${project.id}`)
+    ids.add(project.id)
+  }
+  assertUniqueRoutePrefixes(result.data.projects)
+  return result.data
+}
 
-function isValidUrl(s: string): boolean {
+export function loadConfig(path = CONFIG_PATH): AppConfig {
+  if (cachedConfig && path === CONFIG_PATH) return cachedConfig
+  let parsed: unknown
   try {
-    const u = new URL(s)
-    return u.protocol === "http:" || u.protocol === "https:"
-  } catch {
-    return false
+    parsed = JSON.parse(readFileSync(path, "utf8"))
+  } catch (error) {
+    throw new ConfigError(`Unable to read ${path}: ${(error as Error).message}`)
   }
-}
-
-function isValidCidr(s: string): boolean {
-  return CIDR_RE.test(s)
-}
-
-function abort(msg: string): never {
-  throw new ConfigError(msg)
-}
-
-// ── Main validation ───────────────────────────────────────────────────────────
-
-export function validateConfig(config: AppConfig): void {
-  if (!config.workspacePath || !isAbsolute(config.workspacePath)) {
-    abort("workspacePath must be an absolute path")
+  const file = parseProjectsConfig(parsed)
+  const environment = loadEnvironmentConfig()
+  const tailnetTarget = new URL(file.tailnet.target)
+  if (Number(tailnetTarget.port) !== environment.port) {
+    throw new ConfigError(`tailnet.target must use SOURCEMANAGER_PORT ${environment.port}`)
   }
-  if (!config.server?.token) abort("SOURCEMANAGER_TOKEN is required in the environment")
-  if (!config.server?.port || config.server.port < 1 || config.server.port > 65535) {
-    abort("SOURCEMANAGER_PORT must be an integer between 1 and 65535")
-  }
-  config.server.frontendPort ??= 5173
-  if (config.server.frontendPort < 1 || config.server.frontendPort > 65535) {
-    abort("server.frontendPort must be a number between 1 and 65535")
-  }
-  config.server.allowedIps ??= []
-
-  if (!Array.isArray(config.repos)) abort("repos must be an array in projects.json")
-  if (config.repos.length === 0) abort("repos must not be empty — add at least one repo entry")
-
-  const repoIds = new Set<string>()
-  const serviceIds = new Set<string>()
-
-  for (const repo of config.repos) {
-    validateRepo(repo, config.workspacePath, repoIds, serviceIds)
-  }
-
-  cachedConfig = config
-}
-
-function validateRepo(
-  repo: RepoConfig,
-  workspacePath: string,
-  repoIds: Set<string>,
-  serviceIds: Set<string>,
-): void {
-  if (!repo.id) abort(`A repo entry is missing the required "id" field`)
-  if (!SLUG_RE.test(repo.id)) abort(`Repo id "${repo.id}" must match /^[a-z0-9-]+$/ (lowercase letters, digits, hyphens)`)
-  if (repoIds.has(repo.id)) abort(`Duplicate repo id: "${repo.id}"`)
-  repoIds.add(repo.id)
-
-  if (!repo.displayName) abort(`Repo "${repo.id}" is missing "displayName"`)
-  if (!repo.repoPath) abort(`Repo "${repo.id}" is missing "repoPath"`)
-  resolvedRepoPath(workspacePath, repo.repoPath)
-  if (!repo.defaultBranch) abort(`Repo "${repo.id}" is missing "defaultBranch"`)
-
-  if (!Array.isArray(repo.services)) abort(`Repo "${repo.id}" must have a services array`)
-  if (repo.services.length === 0) abort(`Repo "${repo.id}" must have at least one service entry`)
-
-  for (const svc of repo.services) {
-    validateService(svc, repo.id, serviceIds)
-  }
-}
-
-function validateService(svc: ServiceConfig, repoId: string, serviceIds: Set<string>): void {
-  const ctx = `Service in repo "${repoId}"`
-
-  if (!svc.id) abort(`${ctx} is missing the required "id" field`)
-  if (!SLUG_RE.test(svc.id)) abort(`${ctx}: service id "${svc.id}" must match /^[a-z0-9-]+$/`)
-  if (serviceIds.has(svc.id)) abort(`Duplicate service id: "${svc.id}" — service ids must be globally unique across all repos`)
-  serviceIds.add(svc.id)
-
-  if (!svc.displayName) abort(`Service "${svc.id}" is missing "displayName"`)
-
-  if (!svc.port || svc.port < 1 || svc.port > 65535) abort(`Service "${svc.id}" port must be between 1 and 65535`)
-
-  if (!svc.healthUrl) abort(`Service "${svc.id}" is missing "healthUrl"`)
-  if (!isValidUrl(svc.healthUrl)) abort(`Service "${svc.id}" healthUrl must be a valid http/https URL`)
-
-  svc.healthMode ??= "ping"
-  if (svc.healthMode !== "ping" && svc.healthMode !== "full") {
-    abort(`Service "${svc.id}" healthMode must be "ping" or "full"`)
-  }
-
-  const validPMs = ["auto", "bun", "npm", "yarn", "pnpm"]
-  svc.packageManager ??= "auto"
-  if (!validPMs.includes(svc.packageManager)) {
-    abort(`Service "${svc.id}" packageManager must be one of: ${validPMs.join(", ")}`)
-  }
-
-  svc.scriptName ??= "dev"
-  if (!SCRIPT_RE.test(svc.scriptName)) {
-    abort(`Service "${svc.id}" scriptName "${svc.scriptName}" contains invalid characters — use only letters, digits, colons, hyphens, or underscores`)
-  }
-
-  if (!Array.isArray(svc.tags)) {
-    svc.tags = []
-  }
-  for (const tag of svc.tags) {
-    if (typeof tag !== "string" || tag.trim() === "") {
-      abort(`Service "${svc.id}" tags must be non-empty strings`)
-    }
-  }
-
-  svc.allowedIps ??= []
-  for (const cidr of svc.allowedIps) {
-    if (!isValidCidr(cidr)) abort(`Service "${svc.id}" allowedIps contains invalid CIDR: "${cidr}"`)
-  }
-
-  // Tailnet fields (optional — validated but not acted on until SO-6)
-  if (svc.tailnetHostname !== undefined) {
-    if (typeof svc.tailnetHostname !== "string" || svc.tailnetHostname.includes(".") || svc.tailnetHostname.includes("/")) {
-      abort(`Service "${svc.id}" tailnetHostname must be a simple subdomain without dots or slashes`)
-    }
-  }
-  if (svc.tailscaleServeMode !== undefined && svc.tailscaleServeMode !== "https") {
-    abort(`Service "${svc.id}" tailscaleServeMode must be "https"`)
-  }
-  if (svc.tailscaleServeTarget !== undefined) {
-    if (!isValidUrl(svc.tailscaleServeTarget)) {
-      abort(`Service "${svc.id}" tailscaleServeTarget must be a valid http/https URL`)
-    }
-  }
-  if (svc.tailscaleServeEnabled !== undefined && typeof svc.tailscaleServeEnabled !== "boolean") {
-    abort(`Service "${svc.id}" tailscaleServeEnabled must be a boolean`)
-  }
-
-  if (svc.tailnetExposureMode !== undefined && svc.tailnetExposureMode !== "tailscale-service") {
-    abort(`Service "${svc.id}" tailnetExposureMode must be "tailscale-service"`)
-  }
-  if (svc.tailscaleServiceName !== undefined) {
-    if (typeof svc.tailscaleServiceName !== "string" || !SLUG_RE.test(svc.tailscaleServiceName)) {
-      abort(`Service "${svc.id}" tailscaleServiceName must contain only lowercase letters, digits, and hyphens`)
-    }
-  }
-  if (svc.tailscaleServiceEnabled !== undefined && typeof svc.tailscaleServiceEnabled !== "boolean") {
-    abort(`Service "${svc.id}" tailscaleServiceEnabled must be a boolean`)
-  }
-  if (svc.tailscaleServiceProtocol !== undefined && svc.tailscaleServiceProtocol !== "https") {
-    abort(`Service "${svc.id}" tailscaleServiceProtocol must be "https"`)
-  }
-  if (svc.tailscaleServicePort !== undefined && (
-    !Number.isInteger(svc.tailscaleServicePort)
-    || svc.tailscaleServicePort < 1
-    || svc.tailscaleServicePort > 65535
-  )) {
-    abort(`Service "${svc.id}" tailscaleServicePort must be an integer between 1 and 65535`)
-  }
-  if (svc.tailscaleServiceTarget !== undefined && !isValidUrl(svc.tailscaleServiceTarget)) {
-    abort(`Service "${svc.id}" tailscaleServiceTarget must be a valid http/https URL`)
-  }
-  if (svc.tailscaleServiceEnabled === true && (
-    svc.tailnetExposureMode !== "tailscale-service"
-    || !svc.tailscaleServiceName
-    || !svc.tailscaleServiceTarget
-  )) {
-    abort(`Service "${svc.id}" enabled Tailscale Service requires tailnetExposureMode, tailscaleServiceName, and tailscaleServiceTarget`)
-  }
-}
-
-// ── Config accessors ──────────────────────────────────────────────────────────
-
-export function getConfig(): AppConfig {
-  return loadConfig()
+  const config: AppConfig = { ...file, ...environment, server: { ...file.server, port: environment.port, token: environment.token } }
+  if (path === CONFIG_PATH) cachedConfig = config
+  return config
 }
 
 export function invalidateCache(): void {
   cachedConfig = null
 }
 
-export function getRepo(id: string): RepoConfig | undefined {
-  return loadConfig().repos.find((r) => r.id === id)
+export function getConfig(): AppConfig {
+  return loadConfig()
 }
 
-export function requireRepo(id: string): RepoConfig {
-  const repo = getRepo(id)
-  if (!repo) throw new RepoNotFoundError(id)
-  return repo
+export function getProject(id: string): ProjectConfig | undefined {
+  return getConfig().projects.find((project) => project.id === id)
 }
 
-export function getService(serviceId: string): { repo: RepoConfig; service: ServiceConfig } | undefined {
-  for (const repo of loadConfig().repos) {
-    const service = repo.services.find((s) => s.id === serviceId)
-    if (service) return { repo, service }
-  }
-  return undefined
+const PROJECT_CATALOG: Record<string, Omit<ProjectConfig, "id" | "displayName" | "repoPath" | "defaultBranch" | "enabled" | "tags">> = {
+  sourcemanager: { host: { module: "dist/host/index.js", contractVersion: 1 }, web: { mountPath: "/SourceManager", distPath: "frontend/dist", spaFallback: true }, api: { mountPath: "/api/SourceManager" }, build: { script: "build", verifyScript: "verify:host" } },
+  devplanner: { host: { module: "dist/host/index.js", contractVersion: 1 }, web: { mountPath: "/DevPlanner", distPath: "frontend/dist", spaFallback: true }, api: { mountPath: "/api/DevPlanner" }, realtime: { mountPath: "/api/DevPlanner/ws", protocol: "websocket" }, build: { script: "build", verifyScript: "verify:host" } },
+  lmapi: { host: { module: "dist/host/index.js", contractVersion: 1 }, web: { mountPath: "/LMApi", distPath: "src/public", spaFallback: false }, api: { mountPath: "/api/LMApi" }, realtime: { mountPath: "/api/LMApi/socket.io", protocol: "socket.io" }, build: { script: "build", verifyScript: "verify:host" } },
+  memoryapi: { host: { module: "dist/host/index.js", contractVersion: 1 }, web: { mountPath: "/MemoryApi", distPath: "public", spaFallback: false }, api: { mountPath: "/api/MemoryApi" }, build: { script: "build", verifyScript: "verify:host" } },
+  lmeval: { host: { module: "dist/host/index.js", contractVersion: 1 }, web: { mountPath: "/LMEval", distPath: "dist/web", spaFallback: true }, api: { mountPath: "/api/LMEval" }, realtime: { mountPath: "/api/LMEval/ws", protocol: "websocket" }, build: { script: "build", verifyScript: "verify:host" } },
 }
 
-export function requireService(serviceId: string): { repo: RepoConfig; service: ServiceConfig } {
-  const found = getService(serviceId)
-  if (!found) throw new ServiceNotFoundError(serviceId)
-  return found
-}
-
-export function getAllServices(): Array<{ repo: RepoConfig; service: ServiceConfig }> {
-  const result: Array<{ repo: RepoConfig; service: ServiceConfig }> = []
-  for (const repo of loadConfig().repos) {
-    for (const service of repo.services) {
-      result.push({ repo, service })
+export function previewV1Conversion(input: unknown): V1ConversionPreview {
+  const raw = input as { server?: { allowedIps?: string[] }; repos?: Array<Record<string, unknown>> }
+  if (!Array.isArray(raw.repos)) throw new ConfigError("Legacy config must contain repos[]")
+  const warnings: string[] = []
+  const removedFields = new Set<string>()
+  const projects = raw.repos.map((repo) => {
+    const id = String(repo.id ?? "")
+    const catalog = PROJECT_CATALOG[id]
+    if (!catalog) throw new ConfigError(`No v2 catalog entry exists for project ${id}`)
+    const services = Array.isArray(repo.services) ? repo.services as Array<Record<string, unknown>> : []
+    for (const service of services) {
+      for (const field of ["packageManager", "scriptName", "installCommand", "port", "healthUrl", "healthMode", "allowedIps", "tailscaleServiceName", "tailscaleServiceTarget"]) {
+        if (field in service) removedFields.add(`repos[].services[].${field}`)
+      }
+      if (service.installCommand) warnings.push(`${id}: custom installCommand requires owner review and was not converted`)
     }
-  }
-  return result
-}
-
-// ── Error types ───────────────────────────────────────────────────────────────
-
-export class RepoNotFoundError extends Error {
-  constructor(public readonly repoId: string) {
-    super(`Repo not found: "${repoId}"`)
-    this.name = "RepoNotFoundError"
-  }
-}
-
-export class ServiceNotFoundError extends Error {
-  constructor(public readonly serviceId: string) {
-    super(`Service not found: "${serviceId}"`)
-    this.name = "ServiceNotFoundError"
-  }
-}
-
-// ── Deprecated aliases (kept for Bun test compatibility during migration) ──────
-
-/** @deprecated Use requireService() instead */
-export function requireProject(id: string) {
-  return requireService(id)
-}
-
-/** @deprecated Use getService() instead */
-export function getProject(id: string) {
-  return getService(id)
-}
-
-/** @deprecated Use RepoNotFoundError or ServiceNotFoundError instead */
-export class ProjectNotFoundError extends Error {
-  constructor(public readonly projectId: string) {
-    super(`Project not found: "${projectId}"`)
-    this.name = "ProjectNotFoundError"
+    return { id, displayName: String(repo.displayName ?? id), repoPath: String(repo.repoPath ?? id), defaultBranch: String(repo.defaultBranch ?? "main"), enabled: true, tags: [], compatibility: { lowercaseAlias: true, lmapiV1Alias: id === "lmapi" }, ...catalog }
+  })
+  return {
+    config: parseProjectsConfig({ schemaVersion: 2, server: { allowedIps: raw.server?.allowedIps ?? [] }, tailnet: { serviceName: "apps", enabled: true, protocol: "https", port: 443, target: `http://127.0.0.1:${process.env.SOURCEMANAGER_PORT ?? "17106"}` }, projects }),
+    warnings,
+    removedFields: [...removedFields].sort(),
   }
 }

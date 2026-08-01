@@ -2,25 +2,52 @@
 
 ## Phase 0: decisions and safety baseline
 
-- [ ] Confirm Node LTS target (recommend Node 24) and pin Node/npm versions in every repo.
-- [ ] Confirm canonical URL casing and whether temporary lowercase aliases are required.
-- [ ] Confirm global Tailscale service name `apps` and the resulting Tailnet DNS name/policy grant.
-- [ ] Decide whether `/v1` remains a temporary LMApi compatibility alias.
-- [ ] Define restart behavior for active LMApi requests and LMEval evaluations.
-- [ ] Capture API/browser/WebSocket contract tests against every current standalone app.
-- [ ] Back up current gitignored SourceManager config; do not overwrite it during schema development.
+- [ ] Confirm Node LTS target (Node 24 confirmed) and pin Node/npm versions in every repo. SourceManager is pinned; sibling pins intentionally land with phases 3–5 so their existing worktrees are not modified by this phase.
+- [x] Confirm canonical URL casing and whether temporary lowercase aliases are required.
+- [x] Confirm global Tailscale service name `apps` and the resulting Tailnet DNS name/policy grant.
+- [x] Decide whether `/v1` remains a temporary LMApi compatibility alias.
+- [x] Define restart behavior for active LMApi requests and LMEval evaluations.
+- [x] Capture API/browser/WebSocket contract tests against every current standalone app.
+- [x] Back up current gitignored SourceManager config; do not overwrite it during schema development.
 
 ## Phase 1: shared hosted contract
 
-- [ ] Add versioned `HostedApplication` types, context, status, build manifest, logger, and disposer semantics.
-- [ ] Build a fixture adapter and verify import from a sibling directory with its own dependencies.
-- [ ] Implement safe repo/module/static path resolution and symlink-escape checks.
-- [ ] Implement route-prefix validation, collision detection, ordering, and reserved prefixes.
-- [ ] Implement shared `http.Server` realtime dispatch for `ws` and Socket.IO ownership.
-- [ ] Add hosted contract verification script usable by every repository.
-- [ ] Document standalone wrapper pattern and environment isolation.
+- [x] Add versioned `HostedApplication` types, context, status, build manifest, logger, and disposer semantics.
+- [x] Build a fixture adapter and verify import from a sibling directory with its own dependencies.
+- [x] Implement safe repo/module/static path resolution and symlink-escape checks.
+- [x] Implement route-prefix validation, collision detection, ordering, and reserved prefixes.
+- [x] Implement shared `http.Server` realtime dispatch for `ws` and Socket.IO ownership.
+- [x] Add hosted contract verification script usable by every repository.
+- [x] Document standalone wrapper pattern and environment isolation.
 
-## Phase 2: migrate lowest-risk Express applications
+## Phase 2: build the SourceManager Node/Express host
+
+- [x] Port Elysia management routes/middleware/errors/OpenAPI to Express 5.
+- [x] Replace every `Bun.*`, Bun test, Bun type, Bun script, and Bun lock dependency.
+- [x] Implement adapter loader/registry, bounded static mounts, realtime attachments, and isolated status.
+- [x] Implement v2 config loader/editor/validator and a preview-only v1 converter.
+- [x] Mount the five LocalDev projects with the canonical route map.
+- [x] Replace frontend service/lifecycle UI with project/capability/build/Git/load cards.
+- [x] Replace per-service Tailscale code/UI/config with one global status/toggle.
+- [x] Replace process/update state and logs with project/build/load events.
+- [x] Add restart-capable Windows npm production wrapper and update scheduled-task docs.
+- [x] Add SourceManager host/standalone build manifest (self project).
+
+Implementation note: the active gitignored v1 config remains untouched. The checked-in v2 catalog mounts all five projects, and missing phase 3–5 adapters are reported as isolated `unavailable` modules until those repositories are migrated.
+
+## Phase 3: migrate DevPlanner
+
+- [ ] Port all Elysia route factories and validation/OpenAPI behavior to Express/Zod.
+- [ ] Refactor top-level ConfigService/singleton/watcher initialization.
+- [ ] Replace Bun WebSocket with `ws` and generic client types.
+- [ ] Replace all Bun process/file APIs in runtime, tools, and tests.
+- [ ] Add injected repository/content workspace paths and local env configuration.
+- [ ] Add Vite base, BrowserRouter basename, API base, and realtime path.
+- [ ] Convert tests and scripts from Bun to npm/Vitest/Node.
+- [ ] Replace Bun Docker/runtime references where still supported.
+- [ ] Add standalone/host outputs, manifest, disposal, and parity tests.
+
+## Phase 4: migrate low-risk Express applications
 
 ### LMApi
 
@@ -42,7 +69,7 @@
 - [ ] Add resource disposal and temporary-data host tests.
 - [ ] Add host/standalone build outputs and manifest.
 
-## Phase 3: migrate LMEval
+## Phase 5: migrate LMEval
 
 - [ ] Port Hono routes/error handling to Express routers.
 - [ ] Convert backend services to injected repo-root/config paths.
@@ -53,30 +80,6 @@
 - [ ] Add compiled standalone start, host export, manifest, and Node tests.
 - [ ] Implement active-evaluation restart policy.
 
-## Phase 4: migrate DevPlanner
-
-- [ ] Port all Elysia route factories and validation/OpenAPI behavior to Express/Zod.
-- [ ] Refactor top-level ConfigService/singleton/watcher initialization.
-- [ ] Replace Bun WebSocket with `ws` and generic client types.
-- [ ] Replace all Bun process/file APIs in runtime, tools, and tests.
-- [ ] Add injected repository/content workspace paths and local env configuration.
-- [ ] Add Vite base, BrowserRouter basename, API base, and realtime path.
-- [ ] Convert tests and scripts from Bun to npm/Vitest/Node.
-- [ ] Replace Bun Docker/runtime references where still supported.
-- [ ] Add standalone/host outputs, manifest, disposal, and parity tests.
-
-## Phase 5: build the SourceManager Node/Express host
-
-- [ ] Port Elysia management routes/middleware/errors/OpenAPI to Express 5.
-- [ ] Replace every `Bun.*`, Bun test, Bun type, Bun script, and Bun lock dependency.
-- [ ] Implement adapter loader/registry, bounded static mounts, realtime attachments, and isolated status.
-- [ ] Implement v2 config loader/editor/validator and a preview-only v1 converter.
-- [ ] Mount the five LocalDev projects with the canonical route map.
-- [ ] Replace frontend service/lifecycle UI with project/capability/build/Git/load cards.
-- [ ] Replace per-service Tailscale code/UI/config with one global status/toggle.
-- [ ] Replace process/update state and logs with project/build/load events.
-- [ ] Add restart-capable Windows npm production wrapper and update scheduled-task docs.
-- [ ] Add SourceManager host/standalone build manifest (self project).
 
 ## Phase 6: project-level Git/update foundation
 

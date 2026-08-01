@@ -1,22 +1,9 @@
 import { defineConfig, loadEnv } from "vite"
 import react from "@vitejs/plugin-react"
-import { existsSync, readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const configPath = resolve(__dirname, "..", "data", "projects.json")
-
-function readFrontendPort(): number {
-  if (!existsSync(configPath)) return 5173
-
-  const raw = JSON.parse(readFileSync(configPath, "utf-8")) as {
-    server?: { frontendPort?: unknown }
-  }
-
-  return typeof raw.server?.frontendPort === "number" ? raw.server.frontendPort : 5173
-}
-
 function readBackendPort(env: Record<string, string>): number {
   const raw = env.SOURCEMANAGER_PORT?.trim()
   if (!raw || !/^\d+$/.test(raw)) {
@@ -30,7 +17,6 @@ function readBackendPort(env: Record<string, string>): number {
 }
 
 export default defineConfig(({ command, mode }) => {
-  const frontendPort = readFrontendPort()
   const env = loadEnv(mode, resolve(__dirname, ".."), "")
   const backendUrl = command === "serve"
     ? `http://localhost:${readBackendPort(env)}`
@@ -38,18 +24,18 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     root: "frontend",
+    base: env.VITE_PUBLIC_BASE || "/SourceManager/",
     plugins: [react()],
     build: {
       outDir: "dist",
       emptyOutDir: true,
     },
     server: {
-      port: frontendPort,
+      port: Number(env.SOURCEMANAGER_FRONTEND_PORT || 5173),
       strictPort: true,
       proxy: {
-        "/v1": backendUrl,
+        "/api/SourceManager": backendUrl,
         "/health": backendUrl,
-        "/swagger": backendUrl,
       },
       allowedHosts: [
         'localhost',

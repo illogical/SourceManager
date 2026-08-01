@@ -1,0 +1,1 @@
+{"name":"host-fixture-adapter","private":true,"type":"module","dependencies":{"fixture-dependency":"file:./fixture-dependency"}}

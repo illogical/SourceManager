@@ -1,494 +1,87 @@
-# SourceManager API
+# SourceManager
 
-A secure HTTP API that manages Git operations and server process lifecycle for web applications running on a Windows dev machine. Designed to be called by AI agents on remote machines to pull the latest code and restart servers so changes are visible immediately.
+SourceManager is the Node 24 / Express 5 composition root for the LocalDev application portal. It owns one HTTP server and mounts compiled adapters from independent sibling repositories without turning them into a monorepo.
 
-**Stack:** Bun + TypeScript + Elysia (API) + React + Vite (dashboard) — runs as a lightweight Windows development host on port `17106`.
+Canonical hosted paths:
 
----
+| Project | Web | API | Realtime |
+|---|---|---|---|
+| SourceManager | `/SourceManager` | `/api/SourceManager` | — |
+| DevPlanner | `/DevPlanner` | `/api/DevPlanner` | `/api/DevPlanner/ws` |
+| LMApi | `/LMApi` | `/api/LMApi` | `/api/LMApi/socket.io` |
+| MemoryApi | `/MemoryApi` | `/api/MemoryApi` | — |
+| LMEval | `/LMEval` | `/api/LMEval` | `/api/LMEval/ws` |
 
-## Overview
+Missing or invalid sibling adapters are isolated as unavailable; SourceManager and other valid applications continue loading.
 
-SourceManager lets you manage a set of allowlisted Git repos through a token-authenticated REST API. Repos contain one or more runnable **services**, each with its own port, health URL, and process lifecycle. For each service you can:
+## Requirements
 
-- Pull the latest code (or switch branches) via a safe update workflow
-- Start, stop, and restart the service's development server
-- Check live process status (starting/running/stopped/failed), port assignments, and run history
-- View structured logs for every operation
+- Node `24.18.1` (pinned in `.node-version` and `.nvmrc`)
+- npm 11
+- Git
+- Tailscale when the global `apps` advertisement is enabled
 
-An OpenAPI spec is served live at `/swagger` for use with agent scripts and tooling.
+## Configuration
 
----
+Copy `.env.example` to `.env` and set:
 
-## Prerequisites
-
-- [Bun](https://bun.sh) >= 1.1
-- Windows 10/11 (primary target; Linux compatible for testing)
-- Git available in PATH
-- [Node.js](https://nodejs.org) is not required by SourceManager itself
-- Each managed project cloned under `C:\LocalDev\Projects\` (or any path you configure)
-- Every managed project runtime and configured package manager available in the
-  same user `PATH` (for example Node.js/npm, pnpm, or yarn)
-
----
-
-## Setup
-
-**1. Install dependencies**
-
-```bash
-bun install
-```
-
-**2. Create your configuration**
-
-```powershell
-Copy-Item data/projects.example.json data/projects.json
-Copy-Item .env.example .env
-```
-
-On macOS or Linux, use:
-
-```bash
-cp data/projects.example.json data/projects.json
-cp .env.example .env
-```
-
-Set the runtime values in `.env`:
-
-```dotenv
+```text
 SOURCEMANAGER_PORT=17106
-SOURCEMANAGER_TOKEN=replace-with-a-long-random-token
+SOURCEMANAGER_TOKEN=<secret value>
 SOURCEMANAGER_WORKSPACE_PATH=C:/LocalDev/Projects
 ```
 
-Edit `data/projects.json`. Repository paths are relative to the workspace:
+Copy `data/projects.example.json` to the gitignored `data/projects.json` only after reviewing the v2 adapter catalog. Configuration contains no secrets. Project, adapter, static, and route paths are validated before listening; repository/module/static symlink escapes are rejected.
 
-```json
-{
-  "server": {
-    "frontendPort": 17116,
-    "allowedIps": []
-  },
-  "repos": [
-    {
-      "id": "my-app",
-      "displayName": "My Application",
-      "repoPath": "my-app",
-      "defaultBranch": "main",
-      "services": [
-        {
-          "id": "my-app-web",
-          "displayName": "Web Server",
-          "port": 3000,
-          "healthUrl": "http://localhost:3000/health",
-          "healthMode": "ping",
-          "packageManager": "auto",
-          "scriptName": "dev",
-          "allowedIps": [],
-          "tags": []
-        }
-      ]
-    }
-  ]
-}
-```
+The old v1 configuration is never converted in place. `POST /api/SourceManager/config/preview-v1` returns a preview with removed-field warnings. Saving v2 configuration creates a timestamped backup and uses an atomic temporary-file rename.
 
-**3. Run in development**
-
-```bash
-bun run dev
-```
-
-This starts two processes concurrently:
-
-| Process | Command | URL |
-|---------|---------|-----|
-| API (Bun `--watch`) | `bun run dev:backend` | `http://localhost:<SOURCEMANAGER_PORT>` |
-| Frontend (Vite HMR) | `bun run dev:frontend` | `http://localhost:<server.frontendPort>` (`5173` if omitted) |
-
-Open the configured frontend URL in your browser. Bun automatically loads
-`.env` and an optional `.env.local` override. Vite reads `server.frontendPort` from
-`data/projects.json` and proxies `/v1/*`, `/health`, and `/swagger` to
-`SOURCEMANAGER_PORT`, so the backend port is defined once. Both servers support
-hot reload.
-
-**4. Build and run in production**
-
-```bash
-# Build the frontend once
-bun run frontend:build
-
-# Start the API (serves the built dashboard + API on one port)
-bun run start
-```
-
-After building, `bun run start` serves everything on the configured
-`SOURCEMANAGER_PORT`:
-- `/` → React dashboard (static files from `frontend/dist/`)
-- `/v1/*` → authenticated API
-- `/swagger` → interactive OpenAPI docs
-- `/health` → liveness check
-
-> **`bun run dev:backend` uses `--watch` mode.** Bun monitors all source files and
-> automatically restarts the API when they change. This is significant for the update
-> workflow: when an agent calls `POST /v1/repos/sourcemanager/services/sourcemanager-api/update`
-> to pull new code, the changed source files trigger an automatic restart — no explicit
-> `/restart` API call is needed. Use `restartMode: "never"` when updating SourceManager
-> itself in dev mode.
-
----
-
-## Running on Windows Login
-
-Use the checked-in PowerShell utility to register an interactive Scheduled Task
-for your current Windows user. It runs `bun run dev` after logon, so a visible
-terminal shows both the backend and Vite output. It does not store your Windows
-password or SourceManager token, and it does not require an elevated task.
-
-Install dependencies and create `.env` and `data/projects.json` before
-registering the task. Run `bun install` again after pulling dependency changes;
-the existing Scheduled Task does not need to be reinstalled for application
-updates. Then run:
+## Install, build, and run
 
 ```powershell
-# Register or update the at-logon task
-.\scripts\SourceManagerStartup.ps1 Install
-
-# Start it now without signing out
-.\scripts\SourceManagerStartup.ps1 Start
+npm ci
+npm run build
+npm run verify:host
+npm start
 ```
 
-Manage it with:
+`npm start` executes compiled JavaScript and owns the single configured listener. `npm run dev` builds first and restarts the entire Node host when backend source changes. Individual application HMR remains in each sibling repository's standalone `npm run dev` workflow.
+
+The portal is at `http://127.0.0.1:17106/SourceManager`; `/` redirects there. Public `GET /health` reports host readiness. Management routes require `X-DevServer-Token`:
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET | `/api/SourceManager/projects` | Module, build, checkout, and working-tree status |
+| GET | `/api/SourceManager/events` | Recent project/build/load/config/Tailnet events |
+| GET | `/api/SourceManager/config` | v2 configuration and non-secret runtime summary |
+| POST | `/api/SourceManager/config/validate` | Validate and diff without writing |
+| PUT | `/api/SourceManager/config` | Atomically save v2 configuration |
+| POST | `/api/SourceManager/config/preview-v1` | Preview legacy conversion without writing |
+| GET | `/api/SourceManager/tailnet` | One global `apps` advertisement status |
+| POST | `/api/SourceManager/tailnet/enable` | Enable and persist global advertisement |
+| POST | `/api/SourceManager/tailnet/disable` | Drain, disable, and persist advertisement |
+| POST | `/api/SourceManager/restart` | Request graceful wrapper restart (exit 75) |
+| GET | `/api/SourceManager/openapi.json` | Management OpenAPI document |
+
+The browser token is separately stored as `sm:token` in origin-specific localStorage. Changing `.env` requires a host restart; the Settings page never writes secrets to configuration.
+
+## Hosted adapter contract
+
+Each enabled repository builds `dist/host/index.js`, `dist/host/build-manifest.json`, standalone output, and web assets. Adapters use application-relative Express routers, derive paths from the injected `repoRoot`, attach only their declared realtime path, and dispose every owned resource. See [the adapter guide](docs/features/unified-node-express-portal/host-adapter-guide.md).
+
+The safe update boundary is a whole-host restart. A project is current only when the adapter manifest's `loadedCommit` equals the repository's `checkedOutCommit`. General in-process module hot replacement is unsupported.
+
+## Tests
 
 ```powershell
-.\scripts\SourceManagerStartup.ps1 Status
-.\scripts\SourceManagerStartup.ps1 Stop
-.\scripts\SourceManagerStartup.ps1 Start
-.\scripts\SourceManagerStartup.ps1 Uninstall
+npm test
+npm run typecheck
+npm run verify:fixture
 ```
 
-`Install` and `Uninstall` are idempotent. The script resolves its repository and
-Bun executable with absolute paths, keeps launcher transcripts under
-`data/logs/`, and reports the API and Vite listener status without showing
-secrets. Closing the terminal ends that development session; use `Start` to
-open it again.
+Set `RUN_STANDALONE_CONTRACTS=1` to run the captured phase-0 HTTP/WebSocket contract probes against all five independently running applications. Without it, the live probes are skipped but the baseline coverage test still runs.
 
-The task only starts SourceManager. Managed applications remain controlled
-through the dashboard or lifecycle API.
+## Windows production
 
----
+The scheduled task runs `scripts/SourceManagerStartup.ps1`, which resolves Node/npm, holds a single-instance lock, runs compiled output, honors restart exit code 75, and applies bounded crash backoff. See [Windows production wrapper](docs/features/unified-node-express-portal/windows-production.md) for installation and verification.
 
-## Network and Tailscale Access
-
-Managed applications now run directly on Windows at their configured ports.
-The loopback targets in the
-[Current LocalDev Service Map](docs/features/SO-6C-tailscale-services-named-services.md#current-localdev-service-map)
-remain unchanged and are suitable for Tailscale Services hosted by the same
-machine.
-
-Native hosting does not automatically make an application reachable directly
-from your LAN:
-
-- A service bound to `127.0.0.1` is available locally and to same-host Tailscale
-  forwarding, but not directly to another LAN device.
-- Direct LAN access requires that application to bind to `0.0.0.0` or the
-  Windows LAN address.
-- Windows Defender Firewall must allow only the required TCP port, preferably
-  on the Private network profile.
-- SourceManager does not change application bind addresses or firewall rules.
-
-Verify named Tailscale HTTPS services from a second Tailnet device because the
-service-host machine may not be able to access a Service it hosts through that
-Service's hostname.
-
-### Migrating from the removed Docker runtime
-
-If an older SourceManager container still exists, stop and remove it before
-installing the Windows startup task:
-
-```powershell
-docker stop sourcemanager
-docker rm sourcemanager
-```
-
-Skip these commands if the old container has already been taken down. Removing
-the container does not remove host repositories or SourceManager's host data.
-Disable Docker Desktop at logon only if no other project needs it.
-
-Update `.env` so `SOURCEMANAGER_WORKSPACE_PATH` points directly to the Windows
-repository directory. Remove any old `.env.local` override that points to
-`/workspace/projects`.
-
----
-
-## Authentication
-
-All `/v1/*` endpoints require the header:
-
-```
-X-DevServer-Token: your-strong-secret-token
-```
-
-Requests without a valid token receive `401 Unauthorized`.
-
----
-
-## API Reference
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health` | No | API liveness check |
-| GET | `/swagger` | No | Swagger UI (interactive docs) |
-| GET | `/swagger/json` | No | Raw OpenAPI spec |
-| GET | `/v1/repos` | Yes | List all repos with services and lifecycle state |
-| GET | `/v1/repos/:repoId` | Yes | Single repo detail |
-| GET | `/v1/repos/:repoId/services/:serviceId` | Yes | Service detail + lifecycle state |
-| GET | `/v1/repos/:repoId/services/:serviceId/logs` | Yes | Recent run log entries (`?n=20`) |
-| POST | `/v1/repos/:repoId/services/:serviceId/start` | Yes | Start the service |
-| POST | `/v1/repos/:repoId/services/:serviceId/stop` | Yes | Stop the service (idempotent) |
-| POST | `/v1/repos/:repoId/services/:serviceId/restart` | Yes | Restart the service |
-| POST | `/v1/repos/:repoId/services/:serviceId/update` | Yes | Git pull/branch switch + install/restart |
-| GET | `/v1/config` | Yes | Read editable config snapshot (excludes token) |
-| POST | `/v1/config/validate` | Yes | Validate proposed config; returns errors + diff |
-| POST | `/v1/config/apply` | Yes | Atomically write validated config to disk |
-
-### POST /v1/repos/:repoId/services/:serviceId/update
-
-Triggers the full git update workflow: clean-tree check → fetch → checkout → pull (ff-only) → optional install → optional restart → health check.
-
-```json
-{
-  "branch": "feature/xyz",
-  "installMode": "auto",
-  "restartMode": "auto",
-  "dryRun": false
-}
-```
-
-All fields are optional. Defaults: branch from repo config, `installMode=auto`, `restartMode=auto`, `dryRun=false`.
-
-| Field | Values | Behavior |
-|-------|--------|----------|
-| `installMode` | `auto` | Run install only if lockfile/package.json changed |
-| | `always` | Always run install |
-| | `never` | Skip install |
-| `restartMode` | `auto` | Restart only if health check fails after update |
-| | `always` | Always restart after update |
-| | `never` | Never restart (health check still runs) |
-| `dryRun` | `true` | Runs precheck only; skips all mutations |
-
----
-
-### Config Editing
-
-The Settings page (gear icon) provides a full GUI for editing `data/projects.json`. The config is also editable via API:
-
-**GET `/v1/config`** — returns JSON-owned editable settings plus a read-only
-`runtime` summary containing `port`, `workspacePath`, and `tokenConfigured`.
-The token value is never returned.
-
-**POST `/v1/config/validate`** — validates proposed edits without writing:
-```json
-{ "config": { "server": { "frontendPort": 17116, ... }, "repos": [ ... ] } }
-```
-Returns `{ "validation": { "valid": true, "errors": [], "warnings": [] }, "diff": { "changeCount": 2, "changes": [...] } }`.
-
-**POST `/v1/config/apply`** — validates and atomically writes (temp file + rename).
-Returns `{ "success": true, "changeCount": 2 }` or `422` with validation errors.
-
-**Security guarantees:**
-- `SOURCEMANAGER_TOKEN` is never sent to the client.
-- Environment-owned port and workspace values cannot be changed by the config API.
-- Repository paths must be relative and cannot escape the configured workspace.
-- `repo.id` and `service.id` are immutable — proposed IDs are ignored; original disk IDs are kept.
-- Shell metacharacters (`;`, `&`, `|`, etc.) are rejected in `installCommand`.
-
-**After saving**, restart the Vite development process if `server.frontendPort` changed.
-
----
-
-## Config Reference
-
-### Server fields
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `frontendPort` | No | Vite dev server port for `bun run dev:frontend` (default: `5173`) |
-| `allowedIps` | No | CIDR IP allowlist for the API |
-
-Runtime values are configured in environment files:
-
-| Variable | Description |
-|----------|-------------|
-| `SOURCEMANAGER_PORT` | API and production dashboard port |
-| `SOURCEMANAGER_TOKEN` | Shared token expected in `X-DevServer-Token` |
-| `SOURCEMANAGER_WORKSPACE_PATH` | Absolute workspace visible to the running process |
-
-### Repo fields
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `id` | Yes | Unique repo identifier (slug: `[a-z0-9-]+`) |
-| `displayName` | Yes | Human-readable repo name |
-| `repoPath` | Yes | Path relative to `SOURCEMANAGER_WORKSPACE_PATH`; absolute and escaping paths are rejected |
-| `defaultBranch` | Yes | Branch to pull when none specified |
-| `services` | Yes | Non-empty array of service entries |
-
-### Service fields
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `id` | Yes | Globally unique service identifier (slug, across all repos) |
-| `displayName` | Yes | Human-readable service name |
-| `port` | Yes | Port the service runs on |
-| `healthUrl` | Yes | URL to check after updates |
-| `healthMode` | No | `ping` (default) or `full` |
-| `packageManager` | No | `auto` (default), `bun`, `npm`, `yarn`, `pnpm` |
-| `scriptName` | No | package.json script to run (default: `dev`) |
-| `installCommand` | No | Override install command entirely |
-| `allowedIps` | No | CIDR IP allowlist for this service |
-| `tags` | No | Arbitrary string tags |
-
-**`packageManager: "auto"`** detects from lockfiles in the repo root:
-`bun.lockb` → bun, `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `package-lock.json` → npm, else → bun.
-
-**`healthMode: "ping"`** expects any `2xx` response within 5 seconds.
-**`healthMode: "full"`** expects a JSON body with `status: "ok"` or `ok: true`.
-
----
-
-## Logs
-
-All operations write to daily-rotated NDJSON files in `data/logs/`:
-
-- `data/logs/requests-<date>.ndjson` — every API request (token values redacted)
-- `data/logs/runs-<date>.ndjson` — every update/start/stop/restart operation
-
-Logs older than 7 days are automatically deleted on startup.
-
----
-
-## Process Lifecycle
-
-Services transition through four states: `starting` → `running` | `failed`, or `stopped`.
-
-- Only one process runs per port at any time.
-- Starting a service when its port is already in use **auto-kills** the existing process (logged with PID and result).
-- After spawning, a background health poll runs every second (up to 30 s) to transition `starting` → `running` or `failed`.
-- Process state is persisted to `data/state.json` and restored across API restarts. Stale PIDs are pruned on startup; any service that was `starting` when SourceManager restarted is marked `failed`.
-
----
-
-## Security Notes
-
-- **Rotate your token** periodically. Store it in a secrets manager or Windows Credential Store in production.
-- Use `allowedIps` to restrict access by CIDR range if the API is exposed on a shared network.
-- The API never executes arbitrary shell commands; all git operations use argument arrays via `Bun.spawn()`.
-- Only repos listed in `data/projects.json` can be managed.
-
----
-
-## Testing
-
-The project has two test runners:
-
-```bash
-bun run test           # bun:test — config, middleware, services, routes (103 tests)
-bun run test:vitest    # Vitest — backend + frontend tests (141 tests)
-bun run test:frontend  # Vitest frontend only (54 tests, jsdom)
-bun run test:backend   # Vitest backend only (87 tests, node)
-bun run test:all       # all suites in sequence
-```
-
-Bun's test suite runs in two separate invocations because `mock.module()` patches the global module registry and would otherwise contaminate service-level tests with route-level mocks:
-
-1. **Config, middleware, and service tests** — use real temp git repos; no module mocking.
-2. **Route tests** — mock all service modules and exercise the update workflow end-to-end through `app.handle()`.
-
-Vitest runs separately to cover the backend config accessors, ProcessManager lifecycle state machine, and repos route handlers with vi.mock and fake timers, as well as all React component tests using jsdom and Testing Library.
-
-### Test files
-
-| File | Runner | Coverage |
-|------|--------|----------|
-| `tests/config.test.ts` | bun | Config validation: required fields, defaults, duplicate IDs |
-| `tests/middleware/auth.test.ts` | bun | IP allowlist matching, token validation |
-| `tests/services/git.test.ts` | bun | `gitStatus`, `gitCheckout` (branch injection guards), `detectDependencyChanges` |
-| `tests/services/healthCheck.test.ts` | bun | Ping and full health check modes, connection failure, non-JSON bodies |
-| `tests/services/installer.test.ts` | bun | Lockfile detection priority, custom install commands, non-zero exit handling |
-| `tests/routes/update.test.ts` | bun | All update workflow paths: dryRun, dirty tree, installMode×3, restartMode×3, auth |
-| `tests/vitest/config.test.ts` | Vitest/node | Schema validation, config accessors (`getRepo`, `getService`, `getAllServices`, etc.) |
-| `tests/vitest/processManager.test.ts` | Vitest/node | Lifecycle state machine, health poll, idempotent stop, port tracking |
-| `tests/vitest/routes/repos.test.ts` | Vitest/node | All 7 repos route handlers (GET list/detail/service/logs, POST start/stop/restart) |
-| `frontend/src/__tests__/client.test.ts` | Vitest/jsdom | API client: token helpers, auth errors, request headers, response parsing |
-| `frontend/src/__tests__/Settings.test.tsx` | Vitest/jsdom | Token form: save, test-connection, sign-out |
-| `frontend/src/__tests__/LifecycleBadge.test.tsx` | Vitest/jsdom | Badge label and colour class for all five lifecycle states |
-| `frontend/src/__tests__/ActionButton.test.tsx` | Vitest/jsdom | Loading state, disabled state, variant classes |
-| `frontend/src/__tests__/ServiceCard.test.tsx` | Vitest/jsdom | Action dispatch, pending-action lock, error display, Tailnet URL |
-| `frontend/src/__tests__/RepoList.test.tsx` | Vitest/jsdom | Fetch on mount, 10 s polling, AuthError/ApiError banners, action wiring |
-
-### Watch mode
-
-```bash
-bun run test:watch         # watches config, middleware, and service tests
-bun test tests/routes --watch  # watch route tests separately
-bunx vitest --project frontend  # watch frontend component tests with HMR
-```
-
----
-
-## File Structure
-
-```
-src/
-  index.ts              Entry point — mounts routes, swagger, static plugin, error handler
-  config.ts             Config loader, validation, and accessors
-  types.ts              TypeScript interfaces
-  middleware/           Auth + request logging
-  routes/
-    repos.ts            GET/POST /v1/repos/** (list, detail, logs, start/stop/restart)
-    update.ts           POST /v1/repos/:repoId/services/:serviceId/update
-    health.ts           GET /health
-  services/
-    processManager.ts   Lifecycle state machine (starting/running/stopping/stopped/failed)
-    git.ts              Git operations (status, checkout, pull, diff)
-    healthCheck.ts      Health URL polling (ping and full modes)
-    installer.ts        Package install with lockfile detection
-    runLogger.ts        NDJSON run log read/write
-    requestLogger.ts    NDJSON request log write
-
-frontend/
-  index.html            Vite HTML entry point
-  vite.config.ts        Vite config (dev UI port from JSON, API proxy port from env)
-  vitest.config.ts      Vitest config for frontend tests (jsdom)
-  tsconfig.json         Frontend TypeScript config
-  src/
-    main.tsx            React entry point
-    App.tsx             App shell (header, settings toggle, conditional views)
-    index.css           Global CSS reset
-    api/
-      client.ts         Typed fetch wrapper with token management
-      types.ts          TypeScript types mirroring backend API responses
-    components/
-      Settings.tsx       Token entry form with test-connection and sign-out
-      RepoList.tsx       Grouped service list with 10 s polling
-      ServiceCard.tsx    Per-service card: lifecycle badge, controls, Tailnet URL
-      LifecycleBadge.tsx State chip (running/starting/stopped/failed)
-      ActionButton.tsx   Button with loading, disabled, and variant props
-  dist/                 Production build output (gitignored — run frontend:build)
-
-data/
-  projects.example.json Example config (committed)
-  projects.localdev.example.json Personalized Windows dev-machine example (committed)
-  projects.json         Your config (gitignored)
-  state.json            Process state (gitignored)
-  logs/                 NDJSON logs (gitignored)
-
-scripts/
-  SourceManagerStartup.ps1  Windows logon task install/start/stop/status utility
-
-docs/
-  SPECIFICATION.md      Design specification
-  openapi.yaml          OpenAPI reference (auto-generated live at /swagger/json)
-  features/             Feature design notes
-```
+Architecture, decisions, schema, migration steps, and remaining app phases are under [docs/features/unified-node-express-portal](docs/features/unified-node-express-portal/README.md).

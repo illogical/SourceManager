@@ -637,3 +637,7 @@
   color: #fb7185;
   border-color: rgba(251, 113, 133, 0.45);
 }
+.configEditor {
+  width: 100%; resize: vertical; border: 1px solid rgba(148,163,184,.25); border-radius: 8px;
+  padding: 12px; background: #070b14; color: #dbeafe; font: 12px/1.5 ui-monospace, monospace;
+}
